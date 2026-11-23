@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import {
   Wallet, CheckCircle, XCircle, Clock, IndianRupee, TrendingUp, TrendingDown,
   Download, FileSpreadsheet, Percent, Receipt, RotateCcw, CreditCard, Printer, RefreshCw,
-  ExternalLink, Calendar,
+  ExternalLink, Calendar, AlertTriangle, AlertCircle,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -599,7 +599,12 @@ function SettlementsPanel({ syncTrigger, onSynced }: PanelProps) {
                       <StatusPill status={s.status} />
                       {s.utrNumber && <div className="text-[10px] text-gray-500 font-mono mt-0.5">UTR: {s.utrNumber}</div>}
                       {s.cashfreeTransferId && !s.utrNumber && <div className="text-[10px] text-gray-400 font-mono mt-0.5">{s.cashfreeTransferId}</div>}
-                      {s.failureReason && <div className="text-[10px] text-red-600 max-w-xs mt-0.5">⚠️ {s.failureReason}</div>}
+                      {s.failureReason && (
+                        <div className="text-[10px] text-red-600 max-w-xs mt-0.5 inline-flex items-center gap-1">
+                          <AlertCircle size={10} className="shrink-0" />
+                          <span>{s.failureReason}</span>
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3.5 text-xs text-gray-400">{new Date(s.createdAt).toLocaleDateString("en-IN")}</td>
                     <td className="px-4 py-3.5">
@@ -695,8 +700,9 @@ function SettlementsPanel({ syncTrigger, onSynced }: PanelProps) {
                     </div>
                   </>
                 )}
-                <div className="border-t border-gray-200 pt-2 text-xs text-gray-500">
-                  ⚠️ This action will instruct Cashfree to transfer funds directly to the registered seller beneficiary bank accounts.
+                <div className="border-t border-gray-200 pt-2 text-xs text-gray-500 flex items-start gap-1.5">
+                  <AlertTriangle size={14} className="text-amber-600 shrink-0 mt-0.5" />
+                  <span>This action will instruct Cashfree to transfer funds directly to the registered seller beneficiary bank accounts.</span>
                 </div>
               </div>
 

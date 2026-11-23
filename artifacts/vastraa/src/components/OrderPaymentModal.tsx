@@ -16,6 +16,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { loadCashfreeSdk } from "@/lib/cashfree";
 import { useToast } from "@/hooks/use-toast";
 
 export type Order = {
@@ -40,19 +41,19 @@ interface OrderPaymentModalProps {
 type PaymentTab = "upi" | "card" | "net_banking" | "wallet" | "cod";
 
 const BANK_LIST = [
-  { id: "hdfc", name: "HDFC Bank", logo: "🏦" },
-  { id: "icici", name: "ICICI Bank", logo: "🏦" },
-  { id: "sbi", name: "State Bank of India", logo: "🏦" },
-  { id: "axis", name: "Axis Bank", logo: "🏦" },
-  { id: "kotak", name: "Kotak Mahindra Bank", logo: "🏦" },
-  { id: "pnb", name: "Punjab National Bank", logo: "🏦" },
+  { id: "hdfc", name: "HDFC Bank" },
+  { id: "icici", name: "ICICI Bank" },
+  { id: "sbi", name: "State Bank of India" },
+  { id: "axis", name: "Axis Bank" },
+  { id: "kotak", name: "Kotak Mahindra Bank" },
+  { id: "pnb", name: "Punjab National Bank" },
 ];
 
 const WALLET_LIST = [
-  { id: "paytm", name: "Paytm Wallet", icon: "👛" },
-  { id: "phonepe", name: "PhonePe Wallet", icon: "👛" },
-  { id: "amazon_pay", name: "Amazon Pay", icon: "👛" },
-  { id: "mobikwik", name: "MobiKwik", icon: "👛" },
+  { id: "paytm", name: "Paytm Wallet" },
+  { id: "phonepe", name: "PhonePe Wallet" },
+  { id: "amazon_pay", name: "Amazon Pay" },
+  { id: "mobikwik", name: "MobiKwik" },
 ];
 
 export function OrderPaymentModal({
@@ -157,8 +158,8 @@ export function OrderPaymentModal({
         return;
       }
 
-      // 2. Open Cashfree checkout modal
-      const cashfreeLib = (window as any).Cashfree;
+      // 2. Open Cashfree checkout modal (load SDK dynamically if not loaded)
+      const cashfreeLib = await loadCashfreeSdk();
       if (!cashfreeLib) {
         throw new Error("Cashfree payment gateway SDK is loading. Please try again in a few moments.");
       }
@@ -521,8 +522,9 @@ export function OrderPaymentModal({
                   </div>
                   <div className="flex flex-wrap gap-2 text-xs font-medium">
                     {["Visa", "Mastercard", "RuPay", "Maestro", "American Express"].map((brand) => (
-                      <span key={brand} className="bg-white dark:bg-gray-700 px-3 py-1 rounded-md border border-gray-200 dark:border-gray-600">
-                        💳 {brand}
+                      <span key={brand} className="inline-flex items-center gap-1.5 bg-white dark:bg-gray-700 px-3 py-1 rounded-md border border-gray-200 dark:border-gray-600">
+                        <CreditCard size={12} className="text-[#0A1F44] dark:text-blue-300" />
+                        <span>{brand}</span>
                       </span>
                     ))}
                   </div>
@@ -565,7 +567,7 @@ export function OrderPaymentModal({
                       onClick={() => triggerCashfreeSdkCheckout("net_banking")}
                       className="p-3 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-[#0A1F44] hover:bg-[#0A1F44]/5 text-left transition-all flex items-center gap-2"
                     >
-                      <span className="text-lg">{bank.logo}</span>
+                      <Building2 size={16} className="text-[#0A1F44] dark:text-blue-300 shrink-0" />
                       <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">{bank.name}</span>
                     </button>
                   ))}
@@ -605,7 +607,7 @@ export function OrderPaymentModal({
                       onClick={() => triggerCashfreeSdkCheckout("wallet")}
                       className="p-3.5 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-[#0A1F44] hover:bg-[#0A1F44]/5 text-left transition-all flex items-center gap-2.5"
                     >
-                      <span className="text-xl">{w.icon}</span>
+                      <WalletIcon size={18} className="text-[#0A1F44] dark:text-blue-300 shrink-0" />
                       <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">{w.name}</span>
                     </button>
                   ))}

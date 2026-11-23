@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Save, AlertCircle, CheckCircle, Pencil, Phone, Mail, MapPin, Building2,
   FileText, Home, Package, Truck, CreditCard, ShieldCheck, Loader2,
-  AlertTriangle, Building,
+  AlertTriangle, Building, X,
 } from "lucide-react";
 import { useSellerContext } from "@/components/SellerGuard";
 import { SellerLayout } from "./SellerDashboard";
@@ -1112,8 +1112,9 @@ export default function SellerProfile() {
                   type="button"
                   onClick={() => setShowBankModal(false)}
                   className="text-gray-400 hover:text-gray-600 p-1 rounded-lg"
+                  aria-label="Close"
                 >
-                  ✕
+                  <X size={18} />
                 </button>
               </div>
 

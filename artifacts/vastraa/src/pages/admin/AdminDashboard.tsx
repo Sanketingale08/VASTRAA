@@ -302,7 +302,7 @@ function DashboardContent() {
               icon={AlertTriangle}
               iconBg="rgba(245,158,11,0.1)"
               iconColor="#D97706"
-              sub={(stats.lateAcceptanceOrders ?? 0) > 0 ? `⚠️ ${stats.lateAcceptanceOrders} overdue >24h` : "Pending vendor dispatch"}
+              sub={(stats.lateAcceptanceOrders ?? 0) > 0 ? `${stats.lateAcceptanceOrders} overdue >24h` : "Pending vendor dispatch"}
               alert={(stats.lateAcceptanceOrders ?? 0) > 0}
               onClick={() => setLocation("/admin/orders?status=confirmed")}
             />

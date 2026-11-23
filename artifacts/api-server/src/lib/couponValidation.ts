@@ -1,4 +1,4 @@
-import { db, mongoCoupons, couponsTable, couponRedemptionsTable, ordersTable, mongoOrders, isMongoDbConnected } from "@workspace/db";
+import { db, mongoCoupons, mongoCouponRedemptions, couponsTable, couponRedemptionsTable, ordersTable, mongoOrders, isMongoDbConnected } from "@workspace/db";
 import { eq, and, count, sql } from "drizzle-orm";
 
 export interface CouponItemInput {
@@ -28,6 +28,7 @@ export interface ValidatedCouponData {
   minimumOrderValue: number;
   maxDiscountAmount: number | null;
   eligibleCategories: string[] | null;
+  applicableProducts?: string[] | null;
   firstOrderOnly: boolean;
   perCustomerLimit: number | null;
   startDate: Date | null;
@@ -41,6 +42,7 @@ export interface ValidatedCouponData {
 export interface CouponValidationResult {
   valid: boolean;
   error?: string;
+  message?: string;
   coupon?: ValidatedCouponData;
   totalMerchandiseSubtotal: number;
   eligibleSubtotal: number;
@@ -128,6 +130,11 @@ export async function validateAndCalculateCoupon(
       : typeof coupon.eligibleCategories === "string" && coupon.eligibleCategories.trim()
       ? coupon.eligibleCategories.split(",").map((c: string) => c.trim().toLowerCase()).filter(Boolean)
       : null,
+    applicableProducts: Array.isArray(coupon.applicableProducts)
+      ? coupon.applicableProducts.map((p: any) => String(p).trim().toLowerCase()).filter(Boolean)
+      : typeof coupon.applicableProducts === "string" && coupon.applicableProducts.trim()
+      ? coupon.applicableProducts.split(",").map((p: string) => p.trim().toLowerCase()).filter(Boolean)
+      : null,
     firstOrderOnly: Boolean(coupon.firstOrderOnly),
     perCustomerLimit: coupon.perCustomerLimit != null ? Math.max(1, parseInt(coupon.perCustomerLimit, 10)) : null,
     startDate: coupon.startDate ? new Date(coupon.startDate) : null,
@@ -159,7 +166,7 @@ export async function validateAndCalculateCoupon(
   if (normalizedCoupon.startDate && normalizedCoupon.startDate > now) {
     return {
       valid: false,
-      error: "This coupon is not yet available",
+      error: "This coupon is not yet active",
       coupon: normalizedCoupon,
       totalMerchandiseSubtotal: 0,
       eligibleSubtotal: 0,
@@ -200,20 +207,32 @@ export async function validateAndCalculateCoupon(
   // 6. Per-customer usage limit check
   if (userId) {
     try {
-      const dbClient = tx || db;
-      const redemptions = await dbClient
-        .select()
-        .from(couponRedemptionsTable)
-        .where(
-          and(
-            eq(couponRedemptionsTable.couponId, normalizedCoupon.id),
-            eq(couponRedemptionsTable.userId, userId)
-          )
-        )
-        .limit(100)
-        .catch(() => []);
+      let userUsedCount = 0;
+      try {
+        if (isMongoDbConnected()) {
+          userUsedCount = await mongoCouponRedemptions.count({
+            couponId: normalizedCoupon.id,
+            userId,
+          });
+        }
+      } catch {}
 
-      const userUsedCount = redemptions.length;
+      if (userUsedCount === 0) {
+        const dbClient = tx || db;
+        const redemptions = await dbClient
+          .select()
+          .from(couponRedemptionsTable)
+          .where(
+            and(
+              eq(couponRedemptionsTable.couponId, normalizedCoupon.id),
+              eq(couponRedemptionsTable.userId, userId)
+            )
+          )
+          .limit(100)
+          .catch(() => []);
+        userUsedCount = redemptions.length;
+      }
+
       const perUserMax = normalizedCoupon.perCustomerLimit != null ? normalizedCoupon.perCustomerLimit : 1;
 
       if (userUsedCount >= perUserMax) {
@@ -240,7 +259,6 @@ export async function validateAndCalculateCoupon(
       if (isMongoDbConnected()) {
         const pastOrder = await mongoOrders.findOne({
           userId,
-          status: { $in: ["confirmed", "processing", "shipped", "delivered"] },
         });
         if (pastOrder) hasPriorOrders = true;
       }
@@ -278,20 +296,41 @@ export async function validateAndCalculateCoupon(
   let eligibleSubtotal = 0;
 
   if (Array.isArray(items) && items.length > 0) {
+    const hasCategoryRestriction =
+      normalizedCoupon.eligibleCategories &&
+      normalizedCoupon.eligibleCategories.length > 0 &&
+      !normalizedCoupon.eligibleCategories.includes("all") &&
+      !normalizedCoupon.eligibleCategories.includes("all categories");
+
+    const hasProductRestriction =
+      normalizedCoupon.applicableProducts &&
+      normalizedCoupon.applicableProducts.length > 0;
+
     for (const item of items) {
       const linePrice = Math.max(0, Number(item.price || 0)) * Math.max(1, parseInt(String(item.quantity || 1), 10));
       totalMerchandiseSubtotal += linePrice;
 
-      if (normalizedCoupon.eligibleCategories && normalizedCoupon.eligibleCategories.length > 0) {
+      let itemMatches = true;
+
+      if (hasCategoryRestriction) {
         const itemCategory = (item.category || "").toLowerCase().trim();
         const itemName = (item.name || "").toLowerCase().trim();
-        const isEligible = normalizedCoupon.eligibleCategories.some(
+        const catMatch = normalizedCoupon.eligibleCategories!.some(
           cat => cat === itemCategory || itemCategory.includes(cat) || itemName.includes(cat)
         );
-        if (isEligible) {
-          eligibleSubtotal += linePrice;
-        }
-      } else {
+        if (!catMatch) itemMatches = false;
+      }
+
+      if (hasProductRestriction && itemMatches) {
+        const pId = String(item.productId || item.id || "").toLowerCase().trim();
+        const pName = String(item.name || "").toLowerCase().trim();
+        const prodMatch = normalizedCoupon.applicableProducts!.some(
+          p => p === pId || pId.includes(p) || pName.includes(p)
+        );
+        if (!prodMatch) itemMatches = false;
+      }
+
+      if (itemMatches) {
         eligibleSubtotal += linePrice;
       }
     }
@@ -300,17 +339,23 @@ export async function validateAndCalculateCoupon(
     eligibleSubtotal = totalMerchandiseSubtotal;
   }
 
-  // 9. If category-restricted coupon and no items match
-  if (
-    normalizedCoupon.eligibleCategories &&
-    normalizedCoupon.eligibleCategories.length > 0 &&
-    Array.isArray(items) &&
-    items.length > 0 &&
-    eligibleSubtotal === 0
-  ) {
+  // 9. If category- or product-restricted coupon and no items match
+  const hasFilter =
+    (normalizedCoupon.eligibleCategories &&
+      normalizedCoupon.eligibleCategories.length > 0 &&
+      !normalizedCoupon.eligibleCategories.includes("all") &&
+      !normalizedCoupon.eligibleCategories.includes("all categories")) ||
+    (normalizedCoupon.applicableProducts && normalizedCoupon.applicableProducts.length > 0);
+
+  if (hasFilter && Array.isArray(items) && items.length > 0 && eligibleSubtotal === 0) {
+    const errorMsg =
+      normalizedCoupon.applicableProducts && normalizedCoupon.applicableProducts.length > 0
+        ? "This coupon is applicable to specific products only"
+        : `This coupon is only applicable to items in: ${normalizedCoupon.eligibleCategories?.join(", ")}`;
     return {
       valid: false,
-      error: "This coupon is not applicable to the selected products",
+      error: errorMsg,
+      message: "This coupon is not applicable to items currently in your cart.",
       coupon: normalizedCoupon,
       totalMerchandiseSubtotal,
       eligibleSubtotal: 0,
@@ -325,9 +370,14 @@ export async function validateAndCalculateCoupon(
     const shortfall = Math.max(0, mov - eligibleSubtotal);
     const formattedMov = mov.toLocaleString("en-IN");
     const formattedShortfall = shortfall.toLocaleString("en-IN");
+    const discountVal = normalizedCoupon.type === "percent" ? `${normalizedCoupon.value}%` : `₹${normalizedCoupon.value}`;
+    const dynamicMsg = eligibleSubtotal === 0
+      ? `Shop for ₹${formattedMov} to unlock ${discountVal} OFF.`
+      : `Add ₹${formattedShortfall} more to unlock this offer.`;
     return {
       valid: false,
       error: `${normalizedCoupon.code} requires a minimum eligible purchase of ₹${formattedMov}. Add ₹${formattedShortfall} more to apply this coupon.`,
+      message: dynamicMsg,
       coupon: normalizedCoupon,
       totalMerchandiseSubtotal,
       eligibleSubtotal,
@@ -354,6 +404,7 @@ export async function validateAndCalculateCoupon(
 
   return {
     valid: true,
+    message: `Congratulations! You saved ₹${calculatedDiscount.toLocaleString("en-IN")} using ${normalizedCoupon.code}.`,
     coupon: normalizedCoupon,
     totalMerchandiseSubtotal,
     eligibleSubtotal,

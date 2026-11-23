@@ -607,23 +607,27 @@ export default function AdminAdvertisements() {
                           <td className="py-3 px-4 text-center">
                             <div className="flex flex-col items-center gap-1.5">
                               {ad.status === "active" && (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                  ● Active
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                  <span>Active</span>
                                 </span>
                               )}
                               {ad.status === "scheduled" && (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                                  ⏳ Scheduled
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                  <Clock size={10} className="text-blue-600" />
+                                  <span>Scheduled</span>
                                 </span>
                               )}
                               {ad.status === "expired" && (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                                  ⚠️ Expired
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                  <AlertTriangle size={10} className="text-amber-600" />
+                                  <span>Expired</span>
                                 </span>
                               )}
                               {ad.status === "inactive" && (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-600 border border-gray-200">
-                                  ○ Inactive
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-600 border border-gray-200">
+                                  <span className="w-1.5 h-1.5 rounded-full border border-gray-400" />
+                                  <span>Inactive</span>
                                 </span>
                               )}
 

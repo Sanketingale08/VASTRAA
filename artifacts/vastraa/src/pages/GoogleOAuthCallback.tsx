@@ -182,7 +182,11 @@ export default function GoogleOAuthCallback() {
                 localStorage.removeItem("vastraa_seller_email");
               }
               const target =
-                data.redirectUrl || returnTo || (data.user?.role === "seller" ? "/seller/dashboard" : "/account/overview");
+                (data.redirectUrl && data.redirectUrl !== "/account/overview")
+                  ? data.redirectUrl
+                  : (returnTo && returnTo !== "/account/overview")
+                  ? returnTo
+                  : (data.user?.role === "seller" ? "/seller/dashboard" : data.user?.role === "super_admin" ? "/admin/dashboard" : "/");
               window.location.href = target;
             } else if (data.challengeId) {
               sessionStorage.setItem(

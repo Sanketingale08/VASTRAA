@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { Link } from "wouter";
 import useEmblaCarousel from "embla-carousel-react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Zap } from "lucide-react";
 import { ProductCard } from "@/components/ProductCard";
 import { ProductCardSkeleton } from "@/components/skeletons";
 import { useListProducts } from "@workspace/api-client-react";
@@ -142,7 +142,7 @@ export function ProductSection({
               style={{ background: `linear-gradient(to right, transparent, ${GOLD})` }}
             />
             <div className="flex items-center gap-2">
-              {flashSale && <span className="text-2xl">⚡</span>}
+              {flashSale && <Zap className="w-6 h-6 text-yellow-400 fill-yellow-400 shrink-0" />}
               <h2
                 className={`font-serif text-2xl md:text-3xl lg:text-4xl font-bold tracking-wide ${
                   flashSale ? "text-white" : "text-[#0A1F44]"

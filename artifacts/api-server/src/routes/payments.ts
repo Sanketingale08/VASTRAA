@@ -15,6 +15,7 @@ import {
   couponsTable,
   couponRedemptionsTable,
   mongoCoupons,
+  mongoCouponRedemptions,
 } from "@workspace/db";
 import { eq, and, sql, gte } from "drizzle-orm";
 import { validateAndCalculateCoupon } from "../lib/couponValidation";
@@ -42,6 +43,7 @@ import { insertOrderStatusNotification } from "../lib/orderNotifications";
 import { emitOrderEvent, emitFinancialsEvent } from "../lib/socket";
 import { safeInvalidatePattern } from "../lib/cacheEngine";
 import { logger } from "../lib/logger";
+import { insertAdminNotification } from "../lib/adminNotifications";
 import fs from "fs";
 import path from "path";
 import { generateInvoicePdf } from "../lib/invoiceRenderer";
@@ -372,6 +374,24 @@ export async function confirmOrderPayment(
           .catch(() => []);
         if (existingRedemptions.length === 0) {
           await mongoCoupons.atomicIncrementUsage(coupon.id, coupon.maxUses).catch(() => {});
+          try {
+            await mongoCouponRedemptions.insert({
+              couponId: coupon.id,
+              couponCode: coupon.code,
+              userId: order.userId,
+              orderId,
+              displayOrderId: order.displayId || orderId,
+              discountAmount: Number(order.discount || 0),
+              orderTotal: Number(order.total || 0),
+              originalSubtotal: Number(order.subtotal || 0),
+              customerName: order.address?.name || "Customer",
+              customerEmail: order.customerEmail || order.address?.email || "",
+              paymentMethod: "cashfree",
+              paymentStatus: "paid",
+              status: "confirmed",
+              redeemedAt: new Date(),
+            });
+          } catch {}
           await db.update(couponsTable).set({ usedCount: sql`${couponsTable.usedCount} + 1` }).where(eq(couponsTable.id, coupon.id)).catch(() => {});
           await db.insert(couponRedemptionsTable).values({ couponId: coupon.id, userId: order.userId, orderId }).catch(() => {});
         }
@@ -603,7 +623,9 @@ router.post("/payments/cashfree/create-order", isCustomer, async (req: any, res:
       paymentMethod: "cashfree",
       paymentStatus: "pending",
       couponCode: validatedCouponDoc ? validatedCouponDoc.code : null,
+      couponId: validatedCouponDoc ? validatedCouponDoc.id : null,
       subtotal,
+      originalSubtotal: subtotal,
       discount,
       platformFee,
       shipping: 0,
@@ -1115,6 +1137,13 @@ router.post("/payments/cashfree/simulate-payment", isCustomer, async (req: any, 
         logger.warn({ notifErr, orderId }, "Could not send payment_failed notification during simulation");
       }
 
+      await insertAdminNotification({
+        type: "payment_failure",
+        title: "Payment Transaction Failed",
+        body: `Payment failed for Order #${orderId}. Status: payment_failed.`,
+        metadata: { orderId, total: order.total, paymentStatus: "failed" },
+      }).catch(() => {});
+
       res.json({
         success: false,
         orderId,
@@ -1412,6 +1441,13 @@ router.post("/payments/cashfree/webhook", async (req: Request, res: Response): P
             note: paymentData.payment_message || "Payment declined or failed",
           }).catch(() => {});
         }
+
+        await insertAdminNotification({
+          type: "payment_failure",
+          title: "Payment Transaction Failed",
+          body: `Payment failed for Order #${orderId}. Reason: ${paymentData.payment_message || "Declined by bank or gateway"}`,
+          metadata: { orderId, reason: paymentData.payment_message, referenceId: paymentData.cf_payment_id },
+        }).catch(() => {});
       } catch {}
 
       res.status(200).json({ status: "OK", message: "Failure recorded" });
@@ -1496,6 +1532,15 @@ router.post("/payouts/cashfree/webhook", async (req: Request, res: Response): Pr
           } as any)
           .where(eq(vendorSettlementsTable.cashfreeTransferId, transferId));
       } catch {}
+
+      if (newStatus === "failed") {
+        await insertAdminNotification({
+          type: "payment_failure",
+          title: "Seller Payout Transfer Failed",
+          body: `Payout transfer ${transferId} failed. Reason: ${transferData.reason || "Bank rejection"}`,
+          metadata: { transferId, reason: transferData.reason },
+        }).catch(() => {});
+      }
     }
 
     res.status(200).json({ status: "OK" });

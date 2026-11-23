@@ -61,13 +61,10 @@ export function InvoiceDocumentsModal({
   const [iframeLoading, setIframeLoading] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  useEffect(() => {
-    if (!isOpen || !orderId) {
-      setPreviewingDoc(null);
-      return;
-    }
+  const fetchInvoices = React.useCallback(async () => {
+    const targetId = orderId || displayId;
+    if (!targetId) return;
 
-    let mounted = true;
     setLoading(true);
     setError(null);
 
@@ -76,39 +73,47 @@ export function InvoiceDocumentsModal({
       const adminKey =
         sessionStorage.getItem("td_admin_key") ||
         localStorage.getItem("td_admin_key") ||
+        localStorage.getItem("admin_key") ||
+        sessionStorage.getItem("admin_key") ||
         "dev-admin-key";
       headers["x-admin-key"] = adminKey;
     }
 
-    const fetchPromise = isAdmin
-      ? fetch(`/api/orders/${orderId}/invoices`, { headers, credentials: "include" })
-      : apiFetch(`/api/orders/${orderId}/invoices`);
+    try {
+      let res = isAdmin
+        ? await fetch(`/api/orders/${targetId}/invoices`, { headers, credentials: "include" })
+        : await apiFetch(`/api/orders/${targetId}/invoices`);
 
-    fetchPromise
-      .then(async (res) => {
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.error || `Failed to fetch invoice documents (${res.status})`);
-        }
-        return res.json();
-      })
-      .then((data) => {
-        if (!mounted) return;
-        setDocuments(data.documents || []);
-        setIsMultiVendor(Boolean(data.isMultiVendor));
-      })
-      .catch((err) => {
-        if (!mounted) return;
-        setError(err.message || "Failed to load invoice documents");
-      })
-      .finally(() => {
-        if (mounted) setLoading(false);
-      });
+      if (!res.ok && displayId && targetId !== displayId) {
+        // Fallback to displayId
+        res = isAdmin
+          ? await fetch(`/api/orders/${displayId}/invoices`, { headers, credentials: "include" })
+          : await apiFetch(`/api/orders/${displayId}/invoices`);
+      }
 
-    return () => {
-      mounted = false;
-    };
-  }, [isOpen, orderId, isAdmin]);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Failed to fetch invoice documents (${res.status})`);
+      }
+
+      const data = await res.json();
+      setDocuments(data.documents || []);
+      setIsMultiVendor(Boolean(data.isMultiVendor));
+    } catch (err: any) {
+      setError(err.message || "Failed to load invoice documents");
+    } finally {
+      setLoading(false);
+    }
+  }, [orderId, displayId, isAdmin]);
+
+  useEffect(() => {
+    if (!isOpen || (!orderId && !displayId)) {
+      setPreviewingDoc(null);
+      return;
+    }
+
+    fetchInvoices();
+  }, [isOpen, orderId, displayId, fetchInvoices]);
 
   // Handle Escape key
   useEffect(() => {
@@ -131,6 +136,8 @@ export function InvoiceDocumentsModal({
     const adminKey = isAdmin
       ? sessionStorage.getItem("td_admin_key") ||
         localStorage.getItem("td_admin_key") ||
+        localStorage.getItem("admin_key") ||
+        sessionStorage.getItem("admin_key") ||
         "dev-admin-key"
       : null;
     let url = doc.previewUrl;
@@ -150,6 +157,8 @@ export function InvoiceDocumentsModal({
         const adminKey =
           sessionStorage.getItem("td_admin_key") ||
           localStorage.getItem("td_admin_key") ||
+          localStorage.getItem("admin_key") ||
+          sessionStorage.getItem("admin_key") ||
           "dev-admin-key";
         headers["x-admin-key"] = adminKey;
       }
@@ -345,9 +354,18 @@ export function InvoiceDocumentsModal({
                     <p className="text-xs font-medium">Fetching verified invoice records…</p>
                   </div>
                 ) : error ? (
-                  <div className="p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/40 text-red-700 dark:text-red-400 text-xs flex items-center gap-3">
-                    <AlertCircle size={18} className="shrink-0" />
-                    <span>{error}</span>
+                  <div className="p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/40 text-red-700 dark:text-red-400 text-xs flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <AlertCircle size={18} className="shrink-0" />
+                      <span>{error}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => fetchInvoices()}
+                      className="px-2.5 py-1 text-xs font-semibold rounded bg-red-100 hover:bg-red-200 text-red-800 dark:bg-red-900/50 dark:hover:bg-red-900/80 dark:text-red-200 transition shrink-0 cursor-pointer"
+                    >
+                      Retry
+                    </button>
                   </div>
                 ) : documents.length === 0 ? (
                   <div className="py-12 text-center text-gray-400 text-xs">

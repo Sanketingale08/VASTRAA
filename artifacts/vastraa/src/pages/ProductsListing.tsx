@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import {
-  Search, X, RotateCcw, Star, Home, ChevronRight, ChevronDown, SlidersHorizontal, Check, AlertCircle
+  Search, X, RotateCcw, Star, Home, ChevronRight, ChevronDown, SlidersHorizontal, Check, AlertCircle, Sparkles, Flame, Shirt, ArrowUp
 } from "lucide-react";
 import { PriceRangeCards } from "@/components/PriceRangeCards";
 import { getBudgetByPrice } from "@/constants/budget";
@@ -58,10 +58,11 @@ import {
   parseFiltersFromParams,
   countFilterItems,
   validateFilterValues,
+  areFiltersEqual,
 } from "@/lib/productFilterState";
 
 export type { ProductFilters };
-export { DEFAULT_PRODUCT_FILTERS, parseArrayParam, parseFiltersFromParams, countFilterItems, validateFilterValues };
+export { DEFAULT_PRODUCT_FILTERS, parseArrayParam, parseFiltersFromParams, countFilterItems, validateFilterValues, areFiltersEqual };
 
 const FABRIC_OPTIONS = [
   "Cotton", "Rayon", "Silk", "Chiffon", "Georgette", "Crepe", "Polyester", "Denim",
@@ -112,8 +113,8 @@ const SORT_OPTIONS: { value: ListProductsSort; label: string }[] = [
 ];
 
 const RATING_OPTIONS = [
-  { label: "4★ & above", value: 4 },
-  { label: "3★ & above", value: 3 },
+  { label: "4.0 & above", value: 4 },
+  { label: "3.0 & above", value: 3 },
 ];
 
 const DISCOUNT_OPTIONS = [
@@ -360,11 +361,13 @@ export function ProductsListing({
     if (filteredCategory) params.set("category", filteredCategory);
 
     const qs = params.toString();
-    lastWrittenSearchRef.current = qs;
-    const targetUrl = `${pathname}${qs ? "?" + qs : ""}`;
-    const currentFullSearch = window.location.search.startsWith("?") ? window.location.search.slice(1) : window.location.search;
-    if (currentFullSearch !== qs) {
+    const cleanFullSearch = (window.location.search || "").replace(/^\?/, "");
+    if (cleanFullSearch !== qs) {
+      lastWrittenSearchRef.current = qs;
+      const targetUrl = `${pathname}${qs ? "?" + qs : ""}`;
       navigate(targetUrl, { replace: true });
+    } else {
+      lastWrittenSearchRef.current = qs;
     }
   }, [
     pathname, navigate, search, appliedFilters, sort, page,
@@ -373,28 +376,35 @@ export function ProductsListing({
 
   // Synchronize URL changes into applied state (without opening the filter panel)
   useEffect(() => {
-    if (lastWrittenSearchRef.current !== null && (searchStr === lastWrittenSearchRef.current || `?${searchStr}` === lastWrittenSearchRef.current)) {
+    const cleanSearchStr = (searchStr || "").replace(/^\?/, "");
+    const cleanLastWritten = (lastWrittenSearchRef.current || "").replace(/^\?/, "");
+    if (lastWrittenSearchRef.current !== null && cleanSearchStr === cleanLastWritten) {
       return;
     }
 
     const currentParams = new URLSearchParams(searchStr);
     const parsed = parseFiltersFromParams(currentParams);
-    setAppliedFilters(parsed);
-    setPendingFilters(parsed);
+    if (!parsed.subcategory && subcategory) {
+      parsed.subcategory = subcategory;
+    }
+
+    setAppliedFilters((prev) => (areFiltersEqual(prev, parsed) ? prev : parsed));
+    setPendingFilters((prev) => (areFiltersEqual(prev, parsed) ? prev : parsed));
 
     const newSearch = currentParams.get("search") || currentParams.get("q") || "";
     setSearch((prev) => (prev !== newSearch ? newSearch : prev));
 
     const newSort = currentParams.get("sort") as ListProductsSort | null;
     if (newSort && SORT_OPTIONS.some((o) => o.value === newSort)) {
-      setSort(newSort);
+      setSort((prev) => (prev !== newSort ? newSort : prev));
     }
 
     const newPage = currentParams.get("page");
     if (newPage) {
-      setPage(Math.max(1, Number(newPage)));
+      const parsedPage = Math.max(1, Number(newPage));
+      setPage((prev) => (prev !== parsedPage ? parsedPage : prev));
     }
-  }, [searchStr]);
+  }, [searchStr, subcategory]);
 
   // Query Facets based on APPLIED filters only (prevents API calls on unconfirmed changes)
   const facetQueryKey = [
@@ -1124,8 +1134,8 @@ export function ProductsListing({
               );
             })
           ) : (
-            vendors?.map((v: any) => (
-              <label key={v.id} className="flex items-center justify-between gap-3 cursor-pointer group py-0.5">
+            vendors?.map((v: any, vIdx: number) => (
+              <label key={`${v.id || v._id || "vendor"}-${vIdx}`} className="flex items-center justify-between gap-3 cursor-pointer group py-0.5">
                 <div className="flex items-center gap-2.5">
                   <input
                     type="checkbox"
@@ -1493,7 +1503,10 @@ export function ProductsListing({
             onChange={(e) => updatePendingFilter("newArrival", e.target.checked)}
             className="accent-[#0A1F44] rounded w-3.5 h-3.5 cursor-pointer"
           />
-          <span className="text-xs group-hover:text-[#0A1F44]">✨ Recently Added Arrivals</span>
+          <span className="text-xs group-hover:text-[#0A1F44] inline-flex items-center gap-1.5">
+            <Sparkles size={12} className="text-[#D4AF37] shrink-0" />
+            <span>Recently Added Arrivals</span>
+          </span>
         </label>
       </FilterAccordionSection>
 
@@ -1523,7 +1536,10 @@ export function ProductsListing({
             onChange={(e) => updatePendingFilter("hasOffer", e.target.checked)}
             className="accent-[#0A1F44] rounded w-3.5 h-3.5 cursor-pointer"
           />
-          <span className="text-xs group-hover:text-[#0A1F44]">🔥 Active Offers Only</span>
+          <span className="text-xs group-hover:text-[#0A1F44] inline-flex items-center gap-1.5">
+            <Flame size={12} className="text-orange-500 fill-orange-500 shrink-0" />
+            <span>Active Offers Only</span>
+          </span>
         </label>
       </FilterAccordionSection>
 
@@ -1635,7 +1651,7 @@ export function ProductsListing({
               <div className="max-w-3xl">
                 {badgeLabel && (
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-widest bg-white/10 text-[#C7CCD1] border border-[#C7CCD1]/30 backdrop-blur-md mb-3">
-                    ✨ {badgeLabel}
+                    <Sparkles size={11} className="shrink-0 text-[#D4AF37]" /> {badgeLabel}
                   </span>
                 )}
                 <h1 className="font-serif text-3xl sm:text-4xl font-extrabold text-white tracking-tight mb-2">
@@ -1993,7 +2009,7 @@ export function ProductsListing({
                   )}
                   {appliedFilters.minRating !== undefined && (
                     <FilterChip
-                      label={`Rating: ${appliedFilters.minRating}★ & above`}
+                      label={`Rating: ${appliedFilters.minRating}.0 & above`}
                       onRemove={() => removeAppliedFilter((prev) => ({ ...prev, minRating: undefined }))}
                     />
                   )}
@@ -2246,8 +2262,8 @@ export function ProductsListing({
                 </div>
               ) : products.length === 0 ? (
                 <div className="bg-white rounded-2xl border border-[#C7CCD1]/30 p-8 sm:p-12 text-center my-4 shadow-xs">
-                  <div className="w-16 h-16 bg-[#F4F5F7] rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">
-                    {isTopsCategory ? "👚" : "🪡"}
+                  <div className="w-16 h-16 bg-[#F4F5F7] rounded-full flex items-center justify-center mx-auto mb-4 text-[#0A1F44]/60">
+                    {isTopsCategory ? <Shirt size={30} /> : <Sparkles size={30} />}
                   </div>
                   <h3 className="font-serif text-xl sm:text-2xl font-bold text-[#0A1F44] mb-2">
                     {hasAppliedFilters
@@ -2359,6 +2375,36 @@ export function ProductsListing({
               )}
             </div>
           </div>
+        </div>
+
+        {/* Floating Action Pill on Mobile: Quick Filter Drawer trigger & Scroll to top */}
+        <div className="lg:hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-30 flex items-center bg-[#0A1F44] text-white rounded-full shadow-2xl px-4 py-2 border border-[#C7CCD1]/30 backdrop-blur-md gap-3 mb-safe select-none">
+          <button
+            type="button"
+            onClick={handleOpenFilterPanel}
+            className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-white hover:text-amber-300 transition-colors cursor-pointer min-h-[36px]"
+            aria-label="Open filter options"
+          >
+            <SlidersHorizontal size={14} className="text-amber-400" />
+            <span>Filters</span>
+            {appliedFilterCount > 0 && (
+              <span className="bg-amber-400 text-[#0A1F44] text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold">
+                {appliedFilterCount}
+              </span>
+            )}
+          </button>
+
+          <span className="w-px h-4 bg-white/20" />
+
+          <button
+            type="button"
+            onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+            className="flex items-center gap-1 text-xs font-semibold text-gray-300 hover:text-white transition-colors cursor-pointer min-h-[36px]"
+            aria-label="Scroll to top"
+          >
+            <ArrowUp size={13} />
+            <span>Top</span>
+          </button>
         </div>
       </div>
     </Layout>

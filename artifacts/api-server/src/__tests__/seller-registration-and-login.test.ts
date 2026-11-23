@@ -96,6 +96,15 @@ vi.mock("@workspace/db", () => {
       insert: vi.fn().mockResolvedValue({}),
       findById: vi.fn().mockResolvedValue(null),
     },
+    getNextSequenceValue: vi.fn(async () => 101),
+    formatVendorId: vi.fn((seq: number) => `VEND-${seq}`),
+    isInternalRawId: vi.fn(() => false),
+    getCanonicalSellerId: vi.fn((v: any) => {
+      if (!v) return "";
+      if (v.sellerId && !v.sellerId.includes("-")) return v.sellerId;
+      if (v.vendorId && !v.vendorId.includes("-")) return v.vendorId;
+      return v.sellerId || v.vendorId || v.id || "";
+    }),
     eq: (a: any, b: any) => ({ a, b }),
     or: (...args: any[]) => ({ args }),
   };

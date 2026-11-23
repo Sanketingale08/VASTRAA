@@ -1,10 +1,11 @@
 import React from "react";
-import { Redirect } from "wouter";
+import { Redirect, useLocation } from "wouter";
 import { useAuth } from "@/context/AuthContext";
 import { Loader2 } from "lucide-react";
 
 export function CustomerGuard({ children }: { children: React.ReactNode }) {
   const { isSignedIn, isLoading } = useAuth();
+  const [location] = useLocation();
 
   if (isLoading) {
     return (
@@ -20,7 +21,11 @@ export function CustomerGuard({ children }: { children: React.ReactNode }) {
   }
 
   if (!isSignedIn) {
-    return <Redirect to="/sign-in" />;
+    const redirectUrl =
+      location && location !== "/" && location !== "/sign-in" && location !== "/login" && location !== "/signup" && location !== "/sign-up"
+        ? `/sign-in?redirect=${encodeURIComponent(location)}`
+        : "/sign-in";
+    return <Redirect to={redirectUrl} />;
   }
 
   return <>{children}</>;

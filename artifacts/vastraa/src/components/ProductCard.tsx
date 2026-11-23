@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Heart, Star, Eye, ShoppingBag } from "lucide-react";
+import { Heart, Star, Eye, ShoppingBag, Clock, Zap } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { Link, useLocation } from "wouter";
@@ -54,7 +54,7 @@ function CardCountdown({ endMs }: { endMs: number }) {
   if (rem === 0) return <span className="text-[10px] font-bold text-white uppercase tracking-wide">Sale Ended</span>;
   return (
     <div className="flex items-center gap-1 text-[10px] font-mono font-bold text-white">
-      <span>⏱</span>
+      <Clock size={11} className="shrink-0" />
       <span>{pad(h)}:{pad(m)}:{pad(s)}</span>
     </div>
   );
@@ -120,8 +120,11 @@ export function ProductCard({ product, index = 0, onQuickView, flashSaleEndMs }:
             </span>
           )}
           {product.active !== false && product.stock !== 0 && product.isBestSeller && (
-            <span className="text-[#F4F5F7] text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-md shadow-md bg-[#0A1F44] border border-[#C7CCD1]/50 flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#C7CCD1] animate-pulse" />
+            <span className="text-[#F4F5F7] text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-md shadow-md bg-[#0A1F44] border border-[#C7CCD1]/50 flex items-center gap-1.5">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-slate-300 opacity-75 motion-safe:animate-ping" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[#C7CCD1]" />
+              </span>
               Best Seller
             </span>
           )}
@@ -158,7 +161,13 @@ export function ProductCard({ product, index = 0, onQuickView, flashSaleEndMs }:
         <div className="relative aspect-[3/4] overflow-hidden bg-[#F8F7F4] flex items-center justify-center">
           <img
             src={image}
-            alt={product.name}
+            alt={
+              product.fabric
+                ? `Handwoven ${product.fabric} - ${product.name}`
+                : product.category
+                ? `Authentic ${product.category} weave - ${product.name}`
+                : `Handcrafted traditional weave - ${product.name}`
+            }
             loading="lazy"
             decoding="async"
             width="300"
@@ -170,7 +179,10 @@ export function ProductCard({ product, index = 0, onQuickView, flashSaleEndMs }:
           {/* Flash Sale Countdown Banner */}
           {flashSaleEndMs != null && discount > 0 && (
             <div className="absolute top-0 inset-x-0 z-20 bg-[#0A1F44]/95 backdrop-blur-sm px-3 py-1.5 flex items-center justify-center gap-2 border-b border-[#C7CCD1]/30">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[#C7CCD1]">⚡ Sale ends in</span>
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[#C7CCD1]">
+                <Zap size={11} className="text-yellow-400 fill-yellow-400 shrink-0" />
+                <span>Sale ends in</span>
+              </span>
               <CardCountdown endMs={flashSaleEndMs} />
             </div>
           )}

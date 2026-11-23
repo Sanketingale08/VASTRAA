@@ -12,12 +12,14 @@ import { CartProvider } from "@/context/CartContext";
 import { OrdersProvider } from "@/context/OrdersContext";
 import { SocketProvider } from "@/context/SocketContext";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
-import { CartDrawer } from "@/components/CartDrawer";
 import { ScrollToTop } from "@/components/ScrollToTop";
 import { IntroScreen } from "@/components/IntroScreen";
 import { SellerGuard } from "@/components/SellerGuard";
 import { CustomerGuard } from "@/components/CustomerGuard";
 import Home from "@/pages/Home";
+
+// Lazy-load CartDrawer so it does not inflate the critical initial bundle
+const CartDrawer = safeLazy(() => import("@/components/CartDrawer"), "CartDrawer");
 
 // Resilient Dynamic Import with Auto-Retry & Dual Named/Default Export Resolution
 function safeLazy<T extends React.ComponentType<any>>(
@@ -161,6 +163,7 @@ const AdminAboutContent = safeLazy(() => import("@/pages/admin/AdminAboutContent
 const AdminProducts = safeLazy(() => import("@/pages/admin/AdminProducts"));
 const AdminReports = safeLazy(() => import("@/pages/admin/AdminReports"));
 const AdminSettings = safeLazy(() => import("@/pages/admin/AdminSettings"));
+const AdminUnauthorizedDevice = safeLazy(() => import("@/pages/admin/UnauthorizedDevice"));
 const AdminAdvertisements = safeLazy(() => import("@/pages/admin/AdminAdvertisements"));
 const AdminLogs = safeLazy(() => import("@/pages/admin/AdminLogs"));
 
@@ -604,6 +607,7 @@ function Router() {
           <Route path="/admin/reports" component={AdminReports} />
           <Route path="/admin/logs" component={AdminLogs} />
           <Route path="/admin/settings" component={AdminSettings} />
+          <Route path="/admin/unauthorized-device" component={AdminUnauthorizedDevice} />
           <Route path="/seller/login/*?" component={SellerLogin} />
           <Route path="/seller/register" component={SellerRegister} />
           <Route path="/seller/claim" component={() => <Redirect to="/seller/login" />} />
@@ -657,6 +661,10 @@ function Router() {
           <Route path="/seller/reset-password" component={() => <ResetPasswordPage role="seller" />} />
           <Route path="/forgot-password" component={() => <ForgotPasswordPage role="customer" />} />
           <Route path="/reset-password" component={() => <ResetPasswordPage role="customer" />} />
+          <Route path="/login/*?" component={CustomSignInPage} />
+          <Route path="/login" component={CustomSignInPage} />
+          <Route path="/signup/*?" component={CustomSignUpPage} />
+          <Route path="/signup" component={CustomSignUpPage} />
           <Route path="/sign-in/*?" component={CustomSignInPage} />
           <Route path="/sign-in" component={CustomSignInPage} />
           <Route path="/sign-up/*?" component={CustomSignUpPage} />
@@ -915,7 +923,9 @@ function ClerkProviderWithRoutes() {
                     <MaintenanceGuard>
                       <Router />
                     </MaintenanceGuard>
-                    <CartDrawer />
+                    <Suspense fallback={null}>
+                      <CartDrawer />
+                    </Suspense>
                     <Toaster />
                   </OrdersProvider>
                 </CartProvider>

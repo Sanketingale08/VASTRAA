@@ -23,15 +23,28 @@ export type SellerNotificationType =
 
 export type AdminNotificationType =
   | "new_seller_registration"
+  | "new_vendor_registration"
   | "kyc_submitted"
+  | "vendor_approval_required"
   | "product_pending_approval"
+  | "new_order"
   | "high_value_order"
+  | "vendor_dispute"
+  | "seller_dispute"
   | "customer_complaint"
-  | "system_error_alert"
+  | "refund_request"
+  | "support_ticket"
+  | "seller_support_request"
+  | "ticket_created"
+  | "payment_failure"
   | "payout_failed"
   | "payment_gateway_issue"
-  | "seller_support_request"
-  | "email_delivery_failed";
+  | "shipping_issue"
+  | "system_error"
+  | "system_error_alert"
+  | "email_delivery_failed"
+  | "security_login_alert"
+  | "admin_login";
 
 export type TicketNotificationType =
   | "ticket_created"

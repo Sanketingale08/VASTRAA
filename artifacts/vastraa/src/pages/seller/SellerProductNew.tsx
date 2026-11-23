@@ -1571,8 +1571,9 @@ export default function SellerProductNew() {
                         <AlertCircle size={12} /> {errors.originalPrice}
                       </p>
                     ) : discountPercent !== null ? (
-                      <p className="text-xs text-emerald-600 font-semibold mt-1">
-                        ✓ Shows as {discountPercent}% OFF discount badge on storefront
+                      <p className="text-xs text-emerald-600 font-semibold mt-1 inline-flex items-center gap-1">
+                        <Check size={12} className="shrink-0" />
+                        <span>Shows as {discountPercent}% OFF discount badge on storefront</span>
                       </p>
                     ) : (
                       <p className="text-[11px] text-gray-400 mt-1">
@@ -1772,8 +1773,9 @@ export default function SellerProductNew() {
                         Color: <strong>{form.color}</strong>
                       </span>
                       {isSareeCategory(form.category) && form.blouseIncluded && (
-                        <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 font-medium">
-                          ✓ Blouse piece included
+                        <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 font-medium inline-flex items-center gap-1">
+                          <Check size={11} className="shrink-0" />
+                          <span>Blouse piece included</span>
                         </span>
                       )}
                     </div>

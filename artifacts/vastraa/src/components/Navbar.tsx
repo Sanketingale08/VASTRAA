@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Link, useLocation } from "wouter";
-import { Search, Heart, ShoppingBag, User, Menu, X, ArrowRight, LogIn, LogOut, ClipboardList, LayoutDashboard, Store, Loader2, Sparkles, Star, ChevronDown } from "lucide-react";
+import { Search, Heart, ShoppingBag, User, Menu, X, ArrowRight, LogIn, LogOut, ClipboardList, LayoutDashboard, Store, Loader2, Sparkles, Star, ChevronDown, Palette } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUser, useClerk } from "@clerk/react";
 import { useAuth } from "@/context/AuthContext";
@@ -35,7 +35,7 @@ interface SearchSuggestionsData {
 }
 
 export function Navbar() {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -490,18 +490,20 @@ export function Navbar() {
                               <button
                                 key={c.color}
                                 onClick={() => handleSearchSubmit(undefined, `${c.color} saree`)}
-                                className="px-2.5 py-1 text-[11px] font-semibold bg-white text-[#0A1F44] hover:bg-[#0A1F44] hover:text-white rounded-full border border-gray-200 transition-colors shadow-xs capitalize"
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold bg-white text-[#0A1F44] hover:bg-[#0A1F44] hover:text-white rounded-full border border-gray-200 transition-colors shadow-xs capitalize"
                               >
-                                🎨 {c.label}
+                                <Palette size={12} className="text-[#D4AF37] shrink-0" />
+                                <span>{c.label}</span>
                               </button>
                             ))}
                             {suggestions.occasions.map((o) => (
                               <button
                                 key={o.occasion}
                                 onClick={() => handleSearchSubmit(undefined, `${o.occasion} saree`)}
-                                className="px-2.5 py-1 text-[11px] font-semibold bg-white text-[#0A1F44] hover:bg-[#0A1F44] hover:text-white rounded-full border border-gray-200 transition-colors shadow-xs capitalize"
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold bg-white text-[#0A1F44] hover:bg-[#0A1F44] hover:text-white rounded-full border border-gray-200 transition-colors shadow-xs capitalize"
                               >
-                                ✨ {o.label}
+                                <Sparkles size={12} className="text-[#D4AF37] shrink-0" />
+                                <span>{o.label}</span>
                               </button>
                             ))}
                           </div>
@@ -592,9 +594,10 @@ export function Navbar() {
                             <button
                               key={s}
                               onClick={() => { setSearchQuery(s); handleSearchSubmit(undefined, s); }}
-                              className="px-2.5 py-1 text-xs bg-[#F4F5F7] hover:bg-[#0A1F44] hover:text-white rounded-md text-gray-700 font-medium transition-colors border border-gray-200/60"
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs bg-[#F4F5F7] hover:bg-[#0A1F44] hover:text-white rounded-md text-gray-700 font-medium transition-colors border border-gray-200/60"
                             >
-                              🔍 {s}
+                              <Search size={11} className="text-gray-400 group-hover:text-white shrink-0" />
+                              <span>{s}</span>
                             </button>
                           ))}
                         </div>
@@ -697,6 +700,7 @@ export function Navbar() {
                               if (isClerkSignedIn) {
                                 await clerkSignOut({ redirectUrl: basePath || "/" });
                               }
+                              setLocation("/");
                             }}
                             className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-[#F4F5F7] hover:text-[#0A1F44] transition-colors"
                           >
@@ -936,6 +940,7 @@ export function Navbar() {
                       if (isClerkSignedIn) {
                         await clerkSignOut({ redirectUrl: basePath || "/" });
                       }
+                      setLocation("/");
                     }}
                     className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm hover:bg-white/10 transition-colors text-[#F4F5F7]/80 hover:text-[#F4F5F7]"
                   >

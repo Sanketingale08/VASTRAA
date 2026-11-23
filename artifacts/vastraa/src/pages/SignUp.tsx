@@ -29,7 +29,25 @@ export default function SignUpPage() {
   const [countdown, setCountdown] = useState(0);
 
   const searchParams = new URLSearchParams(window.location.search);
-  const redirectTarget = searchParams.get("redirect") || searchParams.get("from") || "/account/overview";
+  const redirectParam = searchParams.get("redirect") || searchParams.get("from");
+
+  // Role-based redirection: Customers land on Homepage ('/'), Sellers on dashboard, Admins on admin dashboard
+  const defaultTarget =
+    user?.role === "super_admin"
+      ? "/admin/dashboard"
+      : user?.role === "seller"
+      ? "/seller/dashboard"
+      : "/";
+
+  const redirectTarget =
+    redirectParam &&
+    redirectParam !== "/login" &&
+    redirectParam !== "/sign-in" &&
+    redirectParam !== "/signup" &&
+    redirectParam !== "/sign-up" &&
+    redirectParam !== "/account/overview"
+      ? redirectParam
+      : defaultTarget;
 
   // Google OTP Modal State
   const [otpModalState, setOtpModalState] = useState<{
@@ -139,8 +157,22 @@ export default function SignUpPage() {
           setStep("pending");
           setCountdown(60);
         } else {
-          // If already verified
-          setLocation(redirectTarget);
+          // If already verified / authenticated
+          const destination =
+            redirectParam &&
+            redirectParam !== "/login" &&
+            redirectParam !== "/sign-in" &&
+            redirectParam !== "/signup" &&
+            redirectParam !== "/sign-up" &&
+            redirectParam !== "/account/overview"
+              ? redirectParam
+              : result.user?.role === "super_admin"
+              ? "/admin/dashboard"
+              : result.user?.role === "seller"
+              ? "/seller/dashboard"
+              : "/";
+
+          setLocation(destination);
         }
       } else {
         setErrorMessage(result.error || "Unable to create account. Please try again.");
@@ -184,8 +216,8 @@ export default function SignUpPage() {
 
   return (
     <Layout>
-      <div className="flex min-h-[calc(100vh-180px)] items-center justify-center bg-[#F4F5F7] px-4 py-12 md:py-16">
-        <div className="w-full max-w-md bg-white rounded-2xl p-8 md:p-10 shadow-xl border border-[#C7CCD1]/40">
+      <div className="flex min-h-[calc(100vh-180px)] items-center justify-center bg-[#F4F5F7] px-3 sm:px-4 py-8 sm:py-12 md:py-16">
+        <div className="w-full max-w-md bg-white rounded-2xl p-5 sm:p-8 md:p-10 shadow-xl border border-[#C7CCD1]/40">
           {/* Header & Branding */}
           <div className="text-center mb-8">
             <Link href="/" className="inline-block mb-3">

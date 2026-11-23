@@ -1296,7 +1296,17 @@ export function OrderConfirmationPage() {
                   {order.deliveryMethod === "express" ? <Zap size={14} className="text-[#C7CCD1]" /> : <Truck size={14} className="text-[#C7CCD1]" />}
                   <h3 className="font-semibold text-sm">Delivery Method</h3>
                 </div>
-                <p className="text-sm font-bold capitalize">{order.deliveryMethod === "express" ? "⚡ Express (3 days)" : "🚚 Standard (7 days)"}</p>
+                <p className="text-sm font-bold capitalize">
+                  {order.deliveryMethod === "express" ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <Zap size={14} className="text-amber-500 fill-amber-500" /> Express (3 days)
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5">
+                      <Truck size={14} className="text-blue-500" /> Standard (7 days)
+                    </span>
+                  )}
+                </p>
                 <p className="text-xs text-gray-500 mt-1">Est. delivery by</p>
                 <p className="text-xs font-semibold text-[#0A1F44] mt-0.5">{deliveryEst}</p>
                 <div className="mt-3 pt-3 border-t border-[#C7CCD1]/10 space-y-2">

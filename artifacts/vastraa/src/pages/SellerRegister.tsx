@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Store, ChevronRight, ChevronLeft, Check, Eye, EyeOff,
   Upload, Phone, Building2, FileText, Landmark, MapPin, ShieldCheck,
-  Loader2, AlertCircle, CheckCircle2, X, Save,
+  Loader2, AlertCircle, CheckCircle2, X, Save, Lock,
 } from "lucide-react";
 import { getApiUrl, apiFetch } from "@/lib/api";
 import { GoogleAuthButton } from "@/components/GoogleAuthButton";
@@ -683,10 +683,10 @@ export default function SellerRegister() {
           </p>
           <div className="bg-[#E5E8EC] rounded-xl p-4 text-left text-sm text-gray-600 mb-6 space-y-1.5">
             <p className="font-semibold mb-2" style={{ color: EMERALD }}>What happens next</p>
-            <p>✓ KYC document verification (PAN)</p>
-            <p>✓ Bank account validation</p>
-            <p>✓ Shop profile activation</p>
-            <p>✓ Email notification upon approval</p>
+            <p className="flex items-center gap-2"><Check size={14} className="text-emerald-600 shrink-0" /> KYC document verification (PAN)</p>
+            <p className="flex items-center gap-2"><Check size={14} className="text-emerald-600 shrink-0" /> Bank account validation</p>
+            <p className="flex items-center gap-2"><Check size={14} className="text-emerald-600 shrink-0" /> Shop profile activation</p>
+            <p className="flex items-center gap-2"><Check size={14} className="text-emerald-600 shrink-0" /> Email notification upon approval</p>
           </div>
           <button onClick={() => navigate(`${BASE}/seller/login`)}
             className="w-full py-3 rounded-xl text-sm font-bold text-white"
@@ -1100,8 +1100,9 @@ export default function SellerRegister() {
                 <Field label="IFSC Code" required error={e("bankIfsc")} helper="11-character code on your cheque book">
                   <Input value={data.bankIfsc} onChange={(v) => set("bankIfsc")(v.toUpperCase())} placeholder="SBIN0001234" maxLength={11} />
                 </Field>
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
-                  🔒 Your bank details are encrypted and used only for payout purposes.
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700 flex items-center gap-2">
+                  <Lock size={14} className="shrink-0 text-amber-600" />
+                  <span>Your bank details are encrypted and used only for payout purposes.</span>
                 </div>
               </StepShell>
             )}

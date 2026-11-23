@@ -221,9 +221,11 @@ export function GoogleAuthButton({
               if (onSuccess) {
                 onSuccess(callbackData);
               } else {
-                window.location.href =
-                  callbackData.redirectUrl ||
-                  (callbackData.user?.role === "seller" ? "/seller/dashboard" : "/account/overview");
+                const target =
+                  (callbackData.redirectUrl && callbackData.redirectUrl !== "/account/overview")
+                    ? callbackData.redirectUrl
+                    : (callbackData.user?.role === "seller" ? "/seller/dashboard" : callbackData.user?.role === "super_admin" ? "/admin/dashboard" : "/");
+                window.location.href = target;
               }
             } else if (callbackData.requiresOtp && onSuccessChallenge) {
               onSuccessChallenge({

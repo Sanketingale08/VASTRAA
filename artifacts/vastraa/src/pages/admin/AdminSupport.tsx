@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   HelpCircle, Send, Clock, CheckCircle2, AlertCircle, XCircle,
-  Ticket as TicketIcon, MessageSquare, Search, RefreshCw,
+  Ticket as TicketIcon, MessageSquare, Search, RefreshCw, Image as ImageIcon, Paperclip,
 } from "lucide-react";
 import AdminLayout, { AdminGuard } from "./AdminLayout";
 import { cn } from "@/lib/utils";
@@ -375,7 +375,7 @@ function AdminSupportContent() {
                             return (
                               <a key={ai} href={url} target="_blank" rel="noreferrer"
                                 className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded border transition-colors bg-white/30 hover:bg-white/50 border-current/20">
-                                {isImg ? "🖼" : "📎"} <span className="max-w-[90px] truncate">{name}</span>
+                                {isImg ? <ImageIcon size={13} className="shrink-0" /> : <Paperclip size={13} className="shrink-0" />} <span className="max-w-[90px] truncate">{name}</span>
                               </a>
                             );
                           })}

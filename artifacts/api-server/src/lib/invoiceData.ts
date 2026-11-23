@@ -423,20 +423,45 @@ export async function buildInvoiceData(
     bosPrefix = "BOS-CN-";
   }
 
-  const rawAddress = order.address || {};
-  const shippingInfo = resolveStateCode(rawAddress.state);
-  const billingInfo = resolveStateCode(rawAddress.billingState || rawAddress.state);
+  let rawAddress: any = {};
+  if (typeof order.address === "object" && order.address !== null) {
+    rawAddress = order.address;
+  } else if (typeof order.address === "string") {
+    try {
+      rawAddress = JSON.parse(order.address);
+    } catch {
+      rawAddress = { line1: order.address };
+    }
+  } else if (typeof order.shippingAddress === "object" && order.shippingAddress !== null) {
+    rawAddress = order.shippingAddress;
+  } else if (typeof order.shippingAddress === "string") {
+    try {
+      rawAddress = JSON.parse(order.shippingAddress);
+    } catch {
+      rawAddress = { line1: order.shippingAddress };
+    }
+  }
 
-  const customerName = rawAddress.name || order.customer?.name || "Valued Customer";
-  const customerPhone = rawAddress.phone || order.customer?.phone || "";
+  const shippingInfo = resolveStateCode(rawAddress.state || (order.shippingAddress as any)?.state);
+  const billingInfo = resolveStateCode(rawAddress.billingState || rawAddress.state || (order.billingAddress as any)?.state || (order.shippingAddress as any)?.state);
+
+  const customerName = rawAddress.name || (order.shippingAddress as any)?.name || order.customer?.name || order.customerName || "Valued Customer";
+  const customerPhone = rawAddress.phone || (order.shippingAddress as any)?.phone || order.customer?.phone || order.customerPhone || "";
   const customerGstin = rawAddress.buyerGstin || order.customer?.gstin || "URP (Unregistered)";
 
   // Filter items if a specific vendor was requested
-  const allItems: any[] = Array.isArray(order.items) ? order.items : [];
+  let allItems: any[] = [];
+  if (Array.isArray(order.items)) {
+    allItems = order.items;
+  } else if (typeof order.items === "string") {
+    try {
+      allItems = JSON.parse(order.items);
+    } catch {}
+  }
   let filteredItems = allItems;
   if (selectedVendorId) {
     filteredItems = allItems.filter(
-      (it) => String(it.vendorId || it.sellerId) === String(selectedVendorId)
+      (it) => it && String(it.vendorId || it.sellerId) === String(selectedVendorId)
     );
     if (filteredItems.length === 0) filteredItems = allItems; // fallback if vendor not matched
   }
@@ -553,7 +578,51 @@ export async function buildInvoiceData(
       image: resolveItemImage(it.image || (Array.isArray(it.images) ? it.images[0] : null) || it.imageUrl || it.thumbnail),
       weight: it.weight || null,
     };
-  });
+  }).filter(Boolean);
+
+  if (computedItems.length === 0) {
+    const totalAmount = Number(order.totalAmount || order.total || 0);
+    const qty = 1;
+    totalQty = 1;
+    const mrpPaise = toPaise(totalAmount);
+    const unitPricePaise = mrpPaise;
+    const sellingTotalPaise = mrpPaise;
+    const rateBps = 500; // 5% GST
+    const taxablePaise = Math.round((sellingTotalPaise * 10000) / (10000 + rateBps));
+    const gstPaise = sellingTotalPaise - taxablePaise;
+    let cgstPaise = intraState ? Math.round(gstPaise / 2) : 0;
+    let sgstPaise = intraState ? gstPaise - cgstPaise : 0;
+    let igstPaise = intraState ? 0 : gstPaise;
+
+    totalGrossPaise = sellingTotalPaise;
+    totalTaxablePaise = taxablePaise;
+    totalCgstPaise = cgstPaise;
+    totalSgstPaise = sgstPaise;
+    totalIgstPaise = igstPaise;
+    totalItemsSubtotalPaise = sellingTotalPaise;
+
+    computedItems.push({
+      name: order.productTitle || "Handcrafted Heritage Textile",
+      category: "Textiles",
+      sku: null,
+      hsn: "5007",
+      vendor: sellerName,
+      qty,
+      mrp: toRupees(mrpPaise),
+      unit_price: toRupees(unitPricePaise),
+      gst_rate: 5.0,
+      gross: toRupees(mrpPaise),
+      discount: 0,
+      taxable: toRupees(taxablePaise),
+      cgst: toRupees(cgstPaise),
+      sgst: toRupees(sgstPaise),
+      igst: toRupees(igstPaise),
+      tax: toRupees(gstPaise),
+      total: toRupees(sellingTotalPaise),
+      image: null,
+      weight: null,
+    });
+  }
 
   // ── Compute Charges (Platform Fee & Shipping) ──────────────────────────────
   const allVendorIds = getOrderVendorIds(order);

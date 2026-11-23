@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { Layout } from "@/components/Layout";
+import { useAuth } from "@/context/AuthContext";
 import {
   CheckCircle2,
   AlertTriangle,
@@ -18,6 +19,7 @@ type VerificationStatus = "loading" | "success" | "expired" | "invalid" | "alrea
 export default function VerifyEmailPage() {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const [, setLocation] = useLocation();
+  const { user } = useAuth();
 
   const searchParams = new URLSearchParams(window.location.search);
   const token = searchParams.get("token") || "";
@@ -100,7 +102,11 @@ export default function VerifyEmailPage() {
       setRedirectCountdown((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          setLocation("/sign-in?verified=true");
+          if (user) {
+            setLocation("/");
+          } else {
+            setLocation("/sign-in?verified=true");
+          }
           return 0;
         }
         return prev - 1;
@@ -108,7 +114,7 @@ export default function VerifyEmailPage() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [status, setLocation]);
+  }, [status, user, setLocation]);
 
   // Resend cooldown timer
   useEffect(() => {

@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import {
   RotateCcw,
   CheckCircle2,
+  CheckCircle,
   XCircle,
   Truck,
   ShieldCheck,
@@ -188,8 +189,9 @@ export default function Returns() {
                   </li>
                 </ul>
               </div>
-              <div className="mt-6 pt-4 border-t border-gray-100 text-xs text-[#15803D] font-medium">
-                ✓ Full refund or replacement eligible upon Quality Check pass.
+              <div className="mt-6 pt-4 border-t border-gray-100 text-xs text-[#15803D] font-medium inline-flex items-center gap-1.5">
+                <CheckCircle size={14} className="shrink-0" />
+                <span>Full refund or replacement eligible upon Quality Check pass.</span>
               </div>
             </div>
 
@@ -233,8 +235,9 @@ export default function Returns() {
                   </li>
                 </ul>
               </div>
-              <div className="mt-6 pt-4 border-t border-gray-100 text-xs text-[#B91C1C] font-medium">
-                ✕ Return or exchange claims for these items will be rejected automatically.
+              <div className="mt-6 pt-4 border-t border-gray-100 text-xs text-[#B91C1C] font-medium inline-flex items-center gap-1.5">
+                <XCircle size={14} className="shrink-0" />
+                <span>Return or exchange claims for these items will be rejected automatically.</span>
               </div>
             </div>
           </div>

@@ -152,6 +152,9 @@ app.use((req, res, next) => {
     "/api/auth/login",
     "/api/auth/sign-up",
     "/api/admin/login",
+    "/api/download",
+    "/api/app-download",
+    "/download-app",
   ];
   if (publicPaths.some((p) => req.path.startsWith(p))) {
     return next();

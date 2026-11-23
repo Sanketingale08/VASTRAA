@@ -293,8 +293,8 @@ function AdvertisementCarouselView({
                           src={getAdvertisementImageSrc(ad.imageUrl)}
                           alt={ad.title?.trim() || "Advertisement"}
                           className="w-full h-full object-cover object-center transition-transform duration-500 group-hover/card:scale-[1.02] will-change-transform"
-                          loading={idx === 0 || idx === 1 ? "eager" : "lazy"}
-                          decoding="async"
+                          loading={idx === 0 ? "eager" : "lazy"}
+                          decoding={idx === 0 ? "sync" : "async"}
                           fetchPriority={idx === 0 ? "high" : "auto"}
                           onError={(e) => {
                             const el = e.currentTarget;

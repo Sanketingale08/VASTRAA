@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Truck, Check, X, AlertCircle, ThumbsUp, ThumbsDown, Clock,
   Package, FileText, Printer, ShieldCheck, RefreshCw, Calendar, CheckSquare,
-  Sparkles, Gift, MapPin, DollarSign, ExternalLink, Download
+  Sparkles, Gift, MapPin, DollarSign, ExternalLink, Download, Star
 } from "lucide-react";
 import { SellerLayout } from "./SellerDashboard";
 import { OrderTrackingTimeline } from "@/components/OrderTrackingTimeline";
@@ -1006,9 +1006,14 @@ export default function SellerOrderDetail() {
                                     />
                                     <div>
                                       <p className="font-semibold text-gray-800">{c.courierName}</p>
-                                      <p className="text-[11px] text-gray-500">
-                                        {c.estimatedDeliveryDays ? `Est. ${c.estimatedDeliveryDays} days delivery` : "Standard delivery"}
-                                        {c.rating ? ` • ★ ${c.rating}` : ""}
+                                      <p className="text-[11px] text-gray-500 inline-flex items-center gap-1 flex-wrap">
+                                        <span>{c.estimatedDeliveryDays ? `Est. ${c.estimatedDeliveryDays} days delivery` : "Standard delivery"}</span>
+                                        {c.rating ? (
+                                          <span className="inline-flex items-center gap-0.5">
+                                            • <Star size={10} className="fill-amber-400 text-amber-400 inline shrink-0" />
+                                            {c.rating}
+                                          </span>
+                                        ) : null}
                                       </p>
                                     </div>
                                   </div>

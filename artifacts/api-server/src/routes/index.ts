@@ -40,9 +40,12 @@ import adminShippingRouter from "./adminShipping";
 import paymentsRouter from "./payments";
 import advertisementsRouter from "./advertisements";
 import adminLogsRouter from "./adminLogs";
+import adminDevicesRouter from "./adminDevices";
+import appDownloadRouter from "./appDownload";
 
 const router: IRouter = Router();
 
+router.use(appDownloadRouter);
 router.use(paymentsRouter);
 
 router.use(authRouter);
@@ -85,5 +88,6 @@ router.use(paymentMethodsRouter);
 router.use(adminShippingRouter);
 router.use(advertisementsRouter);
 router.use("/admin/logs", adminLogsRouter);
+router.use(adminDevicesRouter);
 
 export default router;

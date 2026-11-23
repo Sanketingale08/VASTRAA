@@ -181,18 +181,18 @@ export function PriceRangeCards({
 
             {/* Middle Section: Price Range (Primary Focus) and Description */}
             <div className="flex-1 flex flex-col justify-center my-2">
-              <h4
+              <h3
                 className={cn(
                   "font-serif font-bold text-xl sm:text-2xl lg:text-[22px] leading-tight tracking-tight transition-colors mb-1.5",
                   isSelected ? "text-white" : "text-[#0A1F44]"
                 )}
               >
                 {option.label}
-              </h4>
+              </h3>
               <p
                 className={cn(
                   "text-xs sm:text-sm font-medium leading-snug transition-colors",
-                  isSelected ? "text-gray-200" : "text-gray-500"
+                  isSelected ? "text-gray-200" : "text-slate-600 dark:text-slate-300"
                 )}
               >
                 {option.subtext}

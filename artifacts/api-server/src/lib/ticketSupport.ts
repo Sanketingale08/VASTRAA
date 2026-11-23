@@ -2,6 +2,7 @@ import { db, mongoNotifications, mongoSellers } from "@workspace/db";
 import { notificationsTable, vendorsTable, ADMIN_NOTIFICATION_USER_ID } from "@workspace/db";
 import type { SupportTicket, TicketNotificationType, AdminNotificationType, SellerNotificationType } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import { insertAdminNotification } from "./adminNotifications";
 
 type NotifyTicketEventType = TicketNotificationType | AdminNotificationType | SellerNotificationType;
 
@@ -130,6 +131,12 @@ export async function notifyTicketEvent(
   }
 
   if (notifyAdmin) {
-    await insertNotification({ userId: ADMIN_NOTIFICATION_USER_ID, type, title, body, metadata });
+    const adminType = type === "ticket_escalated" ? "vendor_dispute" : "support_ticket";
+    await insertAdminNotification({
+      type: adminType,
+      title,
+      body,
+      metadata: { ...metadata, ticketId: ticket.id, subject: ticket.subject, userType: ticket.userType },
+    }).catch(() => {});
   }
 }

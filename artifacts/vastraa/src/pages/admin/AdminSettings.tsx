@@ -5,10 +5,13 @@ import {
   Truck, Mail, Settings, BookOpen, Eye, EyeOff, Loader2, CheckCircle,
   XCircle, ChevronRight, LogOut, AlertTriangle, Lock, Smartphone,
   MapPin, Chrome, X, Save, Activity, Power, Database, Server,
-  Building2, RefreshCw,
+  Building2, RefreshCw, Check, Trash2, Ban, ShieldCheck, Filter,
+  Search, Copy, CheckCircle2, ShieldAlert, Laptop, Info, KeyRound, Radio,
 } from "lucide-react";
 import AdminLayout, { AdminGuard } from "./AdminLayout";
 import { useToast } from "@/hooks/use-toast";
+import { getOrCreateDeviceId, getDeviceName } from "@/lib/deviceAuth";
+import { AdminNotificationPrefs } from "@/components/admin/AdminNotificationPrefs";
 
 // ─── constants ────────────────────────────────────────────────────────────────
 const NAVY = "#0D1B36";
@@ -22,19 +25,40 @@ function sessionToken() {
   if (typeof window === "undefined") return "";
   return sessionStorage.getItem("td_admin_session_token") || localStorage.getItem("td_admin_session_token") || "";
 }
+function adminAuthToken() {
+  if (typeof window === "undefined") return "";
+  return sessionStorage.getItem("admin_token") || localStorage.getItem("admin_token") || localStorage.getItem("td_admin_token") || "";
+}
 
 async function apiFetch(path: string, opts: RequestInit = {}) {
+  const key = adminKey();
+  const token = sessionToken();
+  const authToken = adminAuthToken();
+
   const headers: Record<string, string> = {
-    "x-admin-key": adminKey(),
     "Content-Type": "application/json",
+    "x-device-id": getOrCreateDeviceId(),
+    "x-device-name": getDeviceName(),
     ...(opts.headers as Record<string, string> ?? {}),
   };
-  const token = sessionToken();
+  if (key) headers["x-admin-key"] = key;
   if (token) headers["x-admin-session-token"] = token;
+  if (authToken && !headers["Authorization"] && !headers["authorization"]) {
+    headers["Authorization"] = `Bearer ${authToken}`;
+  }
 
   const r = await fetch(path, { ...opts, credentials: "include", headers });
   if (!r.ok) {
     const body = await r.json().catch(() => ({}));
+    if (r.status === 403 && typeof window !== "undefined") {
+      if (
+        body.code === "DEVICE_UNAUTHORIZED" ||
+        body.code === "DEVICE_BLOCKED" ||
+        body.code === "DEVICE_REVOKED"
+      ) {
+        window.location.href = `/admin/unauthorized-device?code=${encodeURIComponent(body.code)}&deviceId=${encodeURIComponent(body.deviceId || getOrCreateDeviceId())}`;
+      }
+    }
     const err: any = new Error(body.error ?? `HTTP ${r.status}`);
     err.code = body.code;              // preserve structured error code from API
     err.status = r.status;
@@ -48,6 +72,7 @@ async function apiFetch(path: string, opts: RequestInit = {}) {
 const SECTIONS = [
   { id: "profile",       label: "Admin Profile",         icon: User,        desc: "Name, email and contact details",            phase: 1 },
   { id: "security",      label: "Security & Access",      icon: Shield,      desc: "Access key, 2FA and session controls",       phase: 1 },
+  { id: "allow-devices", label: "Allow Devices",          icon: ShieldCheck, desc: "Admin hardware device whitelist & perimeter", phase: 1 },
   { id: "login-activity",label: "Login Activity",         icon: Clock,       desc: "History of admin sign-ins",                  phase: 1 },
   { id: "sessions",      label: "Active Sessions",        icon: Monitor,     desc: "Manage devices currently signed in",         phase: 1 },
   { id: "permissions",   label: "Admin Permissions",      icon: Users,       desc: "Module access and role management",          phase: 2 },
@@ -133,12 +158,238 @@ function Btn({ variant = "primary", loading = false, children, ...props }: React
   );
 }
 
+// ─── Admin Profile OTP Verification Modal ──────────────────────────────────────
+interface AdminProfileOtpModalProps {
+  challengeId: string;
+  requiresEmailOtp: boolean;
+  requiresMobileOtp: boolean;
+  emailTarget?: string;
+  mobileTarget?: string;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+export function AdminProfileOtpModal({
+  challengeId,
+  requiresEmailOtp,
+  requiresMobileOtp,
+  emailTarget,
+  mobileTarget,
+  onClose,
+  onSuccess,
+}: AdminProfileOtpModalProps) {
+  const { toast } = useToast();
+  const [emailOtp, setEmailOtp] = useState("");
+  const [mobileOtp, setMobileOtp] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [cooldownSecs, setCooldownSecs] = useState(60);
+  const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    cooldownRef.current = setInterval(() => {
+      setCooldownSecs(prev => {
+        if (prev <= 1) {
+          if (cooldownRef.current) clearInterval(cooldownRef.current);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => {
+      if (cooldownRef.current) clearInterval(cooldownRef.current);
+    };
+  }, []);
+
+  function startCooldown(secs: number = 60) {
+    setCooldownSecs(secs);
+    if (cooldownRef.current) clearInterval(cooldownRef.current);
+    cooldownRef.current = setInterval(() => {
+      setCooldownSecs(prev => {
+        if (prev <= 1) {
+          if (cooldownRef.current) clearInterval(cooldownRef.current);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }
+
+  async function handleResend() {
+    if (cooldownSecs > 0 || resending) return;
+    setResending(true);
+    setError("");
+    try {
+      const res = await apiFetch("/api/admin/settings/profile/resend-otp", {
+        method: "POST",
+        body: JSON.stringify({ challengeId, type: "all" }),
+      });
+      startCooldown(res.resendCooldownSeconds || 60);
+      toast({ title: "OTP Resent", description: "A new verification code has been dispatched." });
+    } catch (err: any) {
+      if (err.waitSeconds) {
+        startCooldown(err.waitSeconds);
+      }
+      setError(err.message || "Failed to resend verification code.");
+    } finally {
+      setResending(false);
+    }
+  }
+
+  async function handleVerify(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+
+    if (requiresEmailOtp && emailOtp.trim().length !== 6) {
+      setError("Please enter the 6-digit Email OTP.");
+      return;
+    }
+    if (requiresMobileOtp && mobileOtp.trim().length !== 6) {
+      setError("Please enter the 6-digit Mobile OTP.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await apiFetch("/api/admin/settings/profile/verify-otp", {
+        method: "POST",
+        body: JSON.stringify({
+          challengeId,
+          emailOtp: requiresEmailOtp ? emailOtp.trim() : undefined,
+          mobileOtp: requiresMobileOtp ? mobileOtp.trim() : undefined,
+        }),
+      });
+
+      if (res.success || res.ok) {
+        toast({ title: "Success", description: "Profile updated successfully!" });
+        onSuccess();
+      } else {
+        setError(res.error || "Verification failed. Please try again.");
+      }
+    } catch (err: any) {
+      setError(err.message || "Invalid verification code. Please check and try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50/50">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: NAVY }}>
+              <Shield size={15} style={{ color: GOLD }} />
+            </div>
+            <div>
+              <h3 className="font-semibold text-gray-900 text-sm">Verify Contact Details</h3>
+              <p className="text-xs text-gray-500">Security verification required for profile changes</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400">
+            <X size={18} />
+          </button>
+        </div>
+
+        <form onSubmit={handleVerify} className="px-6 py-5 flex flex-col gap-4">
+          <div className="p-3 rounded-lg bg-blue-50 border border-blue-100 flex gap-2.5">
+            <AlertTriangle size={15} className="text-blue-600 shrink-0 mt-0.5" />
+            <p className="text-xs text-blue-800 leading-relaxed">
+              {requiresEmailOtp && requiresMobileOtp
+                ? `Verification OTPs were sent to your new email (${emailTarget}) and mobile (${mobileTarget}). Enter both codes below to confirm changes.`
+                : requiresEmailOtp
+                ? `A verification OTP was sent to your newly entered email (${emailTarget}).`
+                : `A verification OTP was sent via SMS to your newly entered mobile (${mobileTarget}).`}
+            </p>
+          </div>
+
+          {error && (
+            <div className="p-3 rounded-lg bg-red-50 border border-red-100 flex gap-2.5 text-xs text-red-700 font-medium">
+              <AlertTriangle size={14} className="text-red-500 shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {requiresEmailOtp && (
+            <Field label={`Email Verification Code (sent to ${emailTarget || "new email"})`}>
+              <div className="relative">
+                <Input
+                  type="text"
+                  maxLength={6}
+                  value={emailOtp}
+                  onChange={e => setEmailOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="Enter 6-digit Email OTP"
+                  className="font-mono tracking-widest text-center text-lg font-semibold"
+                  autoFocus
+                />
+                <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              </div>
+            </Field>
+          )}
+
+          {requiresMobileOtp && (
+            <Field label={`Mobile Verification Code (sent to ${mobileTarget || "new mobile"})`}>
+              <div className="relative">
+                <Input
+                  type="text"
+                  maxLength={6}
+                  value={mobileOtp}
+                  onChange={e => setMobileOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="Enter 6-digit Mobile OTP"
+                  className="font-mono tracking-widest text-center text-lg font-semibold"
+                  autoFocus={!requiresEmailOtp}
+                />
+                <Smartphone size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              </div>
+            </Field>
+          )}
+
+          <div className="flex items-center justify-between text-xs text-gray-500 pt-1">
+            <span>Code expires in 5 minutes</span>
+            {cooldownSecs > 0 ? (
+              <span className="text-gray-400 font-medium">Resend OTP in {cooldownSecs}s</span>
+            ) : (
+              <button
+                type="button"
+                onClick={handleResend}
+                disabled={resending}
+                className="text-navy font-semibold hover:underline flex items-center gap-1"
+                style={{ color: NAVY }}
+              >
+                {resending && <Loader2 size={12} className="animate-spin" />}
+                Resend OTP
+              </button>
+            )}
+          </div>
+
+          <div className="flex gap-3 pt-3 border-t border-gray-100">
+            <Btn type="submit" loading={loading} className="flex-1">
+              Verify OTP
+            </Btn>
+            <Btn variant="secondary" type="button" onClick={onClose} disabled={loading}>
+              Cancel
+            </Btn>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ─── Admin Profile ─────────────────────────────────────────────────────────────
-function ProfileSection() {
+export function ProfileSection() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", mobile: "" });
+  const [verificationChallenge, setVerificationChallenge] = useState<{
+    challengeId: string;
+    requiresEmailOtp: boolean;
+    requiresMobileOtp: boolean;
+    emailTarget?: string;
+    mobileTarget?: string;
+  } | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["admin-profile"],
@@ -150,61 +401,95 @@ function ProfileSection() {
   }, [data]);
 
   const save = useMutation({
-    mutationFn: () => apiFetch("/api/admin/settings/profile", { method: "PATCH", body: JSON.stringify(form) }),
-    onSuccess: () => {
-      toast({ title: "Profile updated", description: "Admin profile saved successfully." });
-      setEditing(false);
-      qc.invalidateQueries({ queryKey: ["admin-profile"] });
+    mutationFn: () =>
+      apiFetch("/api/admin/settings/profile/request-verification", {
+        method: "POST",
+        body: JSON.stringify(form),
+      }),
+    onSuccess: (res: any) => {
+      if (res?.requiresVerification) {
+        setVerificationChallenge({
+          challengeId: res.challengeId,
+          requiresEmailOtp: res.requiresEmailOtp,
+          requiresMobileOtp: res.requiresMobileOtp,
+          emailTarget: res.emailTarget,
+          mobileTarget: res.mobileTarget,
+        });
+      } else {
+        toast({ title: "Profile updated successfully!", description: "Admin profile details saved." });
+        setEditing(false);
+        qc.invalidateQueries({ queryKey: ["admin-profile"] });
+      }
     },
     onError: (e: Error) => toast({ title: "Update failed", description: e.message, variant: "destructive" }),
   });
 
+  const handleVerificationSuccess = () => {
+    setVerificationChallenge(null);
+    setEditing(false);
+    qc.invalidateQueries({ queryKey: ["admin-profile"] });
+  };
+
   return (
-    <SectionCard id="profile">
-      <SectionHeader icon={User} title="Admin Profile" desc="Your administrator identity and contact details" />
-      <div className="px-6 py-5">
-        {isLoading ? (
-          <div className="flex gap-2 items-center text-sm text-gray-400"><Loader2 size={14} className="animate-spin" />Loading…</div>
-        ) : editing ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field label="Name">
-              <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Super Admin" />
-            </Field>
-            <Field label="Email">
-              <Input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="admin@example.com" />
-            </Field>
-            <Field label="Mobile">
-              <Input value={form.mobile} onChange={e => setForm(f => ({ ...f, mobile: e.target.value }))} placeholder="+91 98765 43210" />
-            </Field>
-            <div className="sm:col-span-2 flex gap-3 pt-2">
-              <Btn onClick={() => save.mutate()} loading={save.isPending}>Save Changes</Btn>
-              <Btn variant="secondary" onClick={() => { setEditing(false); setForm({ name: data?.name ?? "", email: data?.email ?? "", mobile: data?.mobile ?? "" }); }}>Cancel</Btn>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-col sm:flex-row sm:items-center gap-6">
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-2xl font-bold shrink-0" style={{ background: NAVY, color: GOLD }}>
-              {(form.name || "A").charAt(0).toUpperCase()}
-            </div>
-            <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <p className="text-xs text-gray-400 font-medium mb-0.5">Name</p>
-                <p className="text-sm font-semibold text-gray-900">{form.name || "—"}</p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-400 font-medium mb-0.5">Email</p>
-                <p className="text-sm text-gray-700">{form.email || "—"}</p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-400 font-medium mb-0.5">Mobile</p>
-                <p className="text-sm text-gray-700">{form.mobile || "—"}</p>
+    <>
+      <SectionCard id="profile">
+        <SectionHeader icon={User} title="Admin Profile" desc="Your administrator identity and contact details" />
+        <div className="px-6 py-5">
+          {isLoading ? (
+            <div className="flex gap-2 items-center text-sm text-gray-400"><Loader2 size={14} className="animate-spin" />Loading…</div>
+          ) : editing ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field label="Name">
+                <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Super Admin" />
+              </Field>
+              <Field label="Email">
+                <Input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="admin@example.com" />
+              </Field>
+              <Field label="Mobile">
+                <Input value={form.mobile} onChange={e => setForm(f => ({ ...f, mobile: e.target.value }))} placeholder="+91 98765 43210" />
+              </Field>
+              <div className="sm:col-span-2 flex gap-3 pt-2">
+                <Btn onClick={() => save.mutate()} loading={save.isPending}>Save Changes</Btn>
+                <Btn variant="secondary" onClick={() => { setEditing(false); setForm({ name: data?.name ?? "", email: data?.email ?? "", mobile: data?.mobile ?? "" }); }}>Cancel</Btn>
               </div>
             </div>
-            <Btn variant="secondary" onClick={() => setEditing(true)}>Edit Profile</Btn>
-          </div>
-        )}
-      </div>
-    </SectionCard>
+          ) : (
+            <div className="flex flex-col sm:flex-row sm:items-center gap-6">
+              <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-2xl font-bold shrink-0" style={{ background: NAVY, color: GOLD }}>
+                {(form.name || "A").charAt(0).toUpperCase()}
+              </div>
+              <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <p className="text-xs text-gray-400 font-medium mb-0.5">Name</p>
+                  <p className="text-sm font-semibold text-gray-900">{form.name || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400 font-medium mb-0.5">Email</p>
+                  <p className="text-sm text-gray-700">{form.email || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400 font-medium mb-0.5">Mobile</p>
+                  <p className="text-sm text-gray-700">{form.mobile || "—"}</p>
+                </div>
+              </div>
+              <Btn variant="secondary" onClick={() => setEditing(true)}>Edit Profile</Btn>
+            </div>
+          )}
+        </div>
+      </SectionCard>
+
+      {verificationChallenge && (
+        <AdminProfileOtpModal
+          challengeId={verificationChallenge.challengeId}
+          requiresEmailOtp={verificationChallenge.requiresEmailOtp}
+          requiresMobileOtp={verificationChallenge.requiresMobileOtp}
+          emailTarget={verificationChallenge.emailTarget}
+          mobileTarget={verificationChallenge.mobileTarget}
+          onClose={() => setVerificationChallenge(null)}
+          onSuccess={handleVerificationSuccess}
+        />
+      )}
+    </>
   );
 }
 
@@ -841,7 +1126,10 @@ function TwoFAManageModal({ onClose, onSuccess }: { onClose: () => void; onSucce
               {!confirmDisable ? (
                 <>
                   <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3">
-                    <p className="text-xs font-bold text-red-800 mb-1">⚠ Reducing security</p>
+                    <p className="text-xs font-bold text-red-800 mb-1 flex items-center gap-1.5">
+                      <AlertTriangle size={13} className="shrink-0" />
+                      Reducing security
+                    </p>
                     <p className="text-xs text-red-700">Disabling two-factor authentication will remove the extra security layer from your admin account.</p>
                   </div>
                   {totpInput}
@@ -976,6 +1264,27 @@ function SecuritySection() {
           <span className="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5">Browser session</span>
         </div>
 
+        {/* Hardware Device Authorization */}
+        <div className="px-6 py-4 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-gray-900">Allow Devices (Hardware Whitelist)</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Strictly restrict Admin Panel access to approved devices bound to cryptographic credentials.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              const el = document.getElementById("section-allow-devices");
+              el?.scrollIntoView({ behavior: "smooth" });
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#0D1B36] text-white hover:bg-[#071329] transition-colors"
+          >
+            <ShieldCheck size={14} className="text-emerald-400" />
+            <span>Manage Devices</span>
+            <ChevronRight size={13} />
+          </button>
+        </div>
+
         {/* Login Protection */}
         <div className="px-6 py-4 flex items-center justify-between gap-4">
           <div>
@@ -1001,6 +1310,1152 @@ function SecuritySection() {
           onClose={() => setShow2faManage(false)}
           onSuccess={() => { setShow2faManage(false); refresh2fa(); }}
         />
+      )}
+    </SectionCard>
+  );
+}
+
+// ─── Allow Devices (Device Whitelist & Authorization Management) ─────────────
+interface AdminDeviceItem {
+  _id?: string;
+  deviceId: string;
+  deviceName: string;
+  deviceDescription?: string;
+  deviceType?: "desktop" | "mobile" | "tablet";
+  browser?: string;
+  os?: string;
+  status: "authorized" | "pending" | "blocked" | "revoked";
+  ipAddress?: string;
+  lastLoginIp?: string;
+  authorizedBy?: string | null;
+  authorizedDate?: string | null;
+  revokedBy?: string | null;
+  revokedDate?: string | null;
+  revocationReason?: string | null;
+  publicKey?: string;
+  lastSeenAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface DeviceActivityItem {
+  id?: string;
+  deviceId: string;
+  deviceName?: string;
+  action: string;
+  administrator?: string;
+  result: "success" | "failure";
+  reason?: string;
+  ipAddress?: string;
+  timestamp: string;
+  details?: any;
+}
+
+function AllowDevicesSection() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const currentBrowserId = getOrCreateDeviceId();
+
+  // Form states
+  const [browserIdInput, setBrowserIdInput] = useState("");
+  const [browserNameInput, setBrowserNameInput] = useState("");
+  const [deviceNameInput, setDeviceNameInput] = useState("");
+  const [descriptionInput, setDescriptionInput] = useState("");
+  const [deviceStatusInput, setDeviceStatusInput] = useState<"authorized" | "blocked">("authorized");
+  const [submitting, setSubmitting] = useState(false);
+
+  // Filter & Search states
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeTab, setActiveTab] = useState<"devices" | "activities">("devices");
+
+  // Modal / Selection states
+  const [selectedDevice, setSelectedDevice] = useState<AdminDeviceItem | null>(null);
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Fetch Devices Query
+  const {
+    data: devicesData,
+    isLoading: devicesLoading,
+    refetch: refetchDevices,
+  } = useQuery<{
+    success: boolean;
+    devices: AdminDeviceItem[];
+    totalCount: number;
+    stats: {
+      total: number;
+      authorized: number;
+      pending: number;
+      blocked: number;
+      revoked: number;
+      unauthorized?: number;
+    };
+  }>({
+    queryKey: ["admin-devices", statusFilter, searchQuery],
+    queryFn: () => {
+      const p = new URLSearchParams();
+      if (statusFilter !== "all") p.set("status", statusFilter);
+      if (searchQuery.trim()) p.set("search", searchQuery.trim());
+      return apiFetch(`/api/admin/devices?${p.toString()}`);
+    },
+    staleTime: 10_000,
+  });
+
+  // Fetch Activity Logs Query
+  const {
+    data: activitiesData,
+    isLoading: activitiesLoading,
+    refetch: refetchActivities,
+  } = useQuery<{
+    success: boolean;
+    activities: DeviceActivityItem[];
+  }>({
+    queryKey: ["admin-device-activities"],
+    queryFn: () => apiFetch("/api/admin/devices/activities?limit=100"),
+    staleTime: 15_000,
+    enabled: activeTab === "activities",
+  });
+
+  const devices = devicesData?.devices ?? [];
+  const stats = devicesData?.stats ?? {
+    total: 0,
+    authorized: 0,
+    pending: 0,
+    blocked: 0,
+    revoked: 0,
+    unauthorized: 0,
+  };
+  const activities = activitiesData?.activities ?? [];
+
+  const copyToClipboard = (id: string) => {
+    navigator.clipboard.writeText(id);
+    setCopiedId(id);
+    toast({ title: "Copied!", description: `Browser ID ${id} copied to clipboard.` });
+    setTimeout(() => setCopiedId(null), 2500);
+  };
+
+  const handleFillCurrentBrowser = () => {
+    setBrowserIdInput(currentBrowserId);
+    const currName = getDeviceName();
+    if (!browserNameInput) setBrowserNameInput(currName);
+    toast({
+      title: "Current Browser Selected",
+      description: `Loaded identifier ${currentBrowserId}`,
+    });
+  };
+
+  // Submit Allow Device Form
+  const handleAllowDeviceSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanId = browserIdInput.trim();
+    if (!cleanId) {
+      toast({
+        title: "Validation Error",
+        description: "Please provide a valid Browser ID.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Check duplicate registrations
+    const existing = devices.find((d) => d.deviceId.toLowerCase() === cleanId.toLowerCase());
+    if (existing && existing.status === deviceStatusInput && existing.deviceName === browserNameInput.trim()) {
+      toast({
+        title: "Duplicate Registration",
+        description: `Browser ${cleanId} is already registered with status "${existing.status}".`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await apiFetch("/api/admin/devices/allow", {
+        method: "POST",
+        body: JSON.stringify({
+          deviceId: cleanId,
+          browserId: cleanId,
+          browserName: browserNameInput.trim() || undefined,
+          deviceName: deviceNameInput.trim() || undefined,
+          deviceDescription: descriptionInput.trim() || undefined,
+          status: deviceStatusInput,
+        }),
+      });
+
+      toast({
+        title: deviceStatusInput === "authorized" ? "Browser Allowed" : "Browser Blocked",
+        description: `Browser ${cleanId} has been successfully ${deviceStatusInput === "authorized" ? "authorized" : "registered as blocked"}.`,
+      });
+
+      // Reset form
+      setBrowserIdInput("");
+      setBrowserNameInput("");
+      setDeviceNameInput("");
+      setDescriptionInput("");
+      qc.invalidateQueries({ queryKey: ["admin-devices"] });
+      qc.invalidateQueries({ queryKey: ["admin-device-activities"] });
+    } catch (err: any) {
+      toast({
+        title: "Failed to Allow Browser",
+        description: err.message || "An error occurred while saving browser.",
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Quick Action: Allow / Re-authorize Browser
+  const handleAllowDevice = async (dId: string) => {
+    setActionLoadingId(dId);
+    try {
+      await apiFetch("/api/admin/devices/allow", {
+        method: "POST",
+        body: JSON.stringify({ deviceId: dId, browserId: dId, status: "authorized" }),
+      });
+      toast({
+        title: "Access Granted",
+        description: `Browser ${dId} has been authorized.`,
+      });
+      qc.invalidateQueries({ queryKey: ["admin-devices"] });
+      qc.invalidateQueries({ queryKey: ["admin-device-activities"] });
+      if (selectedDevice?.deviceId === dId) {
+        setSelectedDevice((prev) => (prev ? { ...prev, status: "authorized" } : null));
+      }
+    } catch (err: any) {
+      toast({ title: "Action Failed", description: err.message, variant: "destructive" });
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  // Action: Unblock Browser
+  const handleUnblockDevice = async (dId: string) => {
+    setActionLoadingId(dId);
+    try {
+      await apiFetch(`/api/admin/devices/${encodeURIComponent(dId)}/unblock`, {
+        method: "POST",
+      });
+      toast({
+        title: "Browser Unblocked",
+        description: `Browser ${dId} has been unblocked and re-authorized.`,
+      });
+      qc.invalidateQueries({ queryKey: ["admin-devices"] });
+      qc.invalidateQueries({ queryKey: ["admin-device-activities"] });
+      if (selectedDevice?.deviceId === dId) {
+        setSelectedDevice((prev) => (prev ? { ...prev, status: "authorized" } : null));
+      }
+    } catch (err: any) {
+      toast({ title: "Unblock Failed", description: err.message, variant: "destructive" });
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  // Action: Block Browser (Immediately invalidates active sessions)
+  const handleBlockDevice = async (dId: string) => {
+    if (!window.confirm(`Are you sure you want to BLOCK browser ${dId}?\n\nThis will immediately terminate all active administrative sessions originating from this browser.`)) {
+      return;
+    }
+    setActionLoadingId(dId);
+    try {
+      await apiFetch(`/api/admin/devices/${encodeURIComponent(dId)}/block`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Administrator manual block action." }),
+      });
+      toast({
+        title: "Browser Blocked",
+        description: `Browser ${dId} blocked and active admin sessions invalidated.`,
+      });
+      qc.invalidateQueries({ queryKey: ["admin-devices"] });
+      qc.invalidateQueries({ queryKey: ["admin-device-activities"] });
+      if (selectedDevice?.deviceId === dId) {
+        setSelectedDevice((prev) => (prev ? { ...prev, status: "blocked" } : null));
+      }
+    } catch (err: any) {
+      toast({ title: "Failed to Block Browser", description: err.message, variant: "destructive" });
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  // Action: Revoke Access (Immediately invalidates active sessions)
+  const handleRevokeDevice = async (dId: string) => {
+    if (!window.confirm(`Revoke access for browser ${dId}?\n\nThis will immediately revoke authorization and invalidate any active sessions.`)) {
+      return;
+    }
+    setActionLoadingId(dId);
+    try {
+      await apiFetch(`/api/admin/devices/${encodeURIComponent(dId)}/revoke`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Administrator revoked access from settings." }),
+      });
+      toast({
+        title: "Access Revoked",
+        description: `Browser ${dId} revoked. Admin panel access will be blocked.`,
+      });
+      qc.invalidateQueries({ queryKey: ["admin-devices"] });
+      qc.invalidateQueries({ queryKey: ["admin-device-activities"] });
+      if (selectedDevice?.deviceId === dId) {
+        setSelectedDevice((prev) => (prev ? { ...prev, status: "revoked" } : null));
+      }
+    } catch (err: any) {
+      toast({ title: "Failed to Revoke Browser", description: err.message, variant: "destructive" });
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  // Action: Delete Browser Record
+  const handleDeleteDevice = async (dId: string) => {
+    if (!window.confirm(`Permanently delete browser record for ${dId}?\n\nWarning: If this browser connects again, it will be treated as completely unknown.`)) {
+      return;
+    }
+    setActionLoadingId(dId);
+    try {
+      await apiFetch(`/api/admin/devices/${encodeURIComponent(dId)}`, {
+        method: "DELETE",
+      });
+      toast({
+        title: "Record Deleted",
+        description: `Browser record ${dId} deleted successfully.`,
+      });
+      qc.invalidateQueries({ queryKey: ["admin-devices"] });
+      qc.invalidateQueries({ queryKey: ["admin-device-activities"] });
+      if (selectedDevice?.deviceId === dId) {
+        setSelectedDevice(null);
+      }
+    } catch (err: any) {
+      toast({ title: "Failed to Delete Browser", description: err.message, variant: "destructive" });
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  // Status Badge UI helper
+  const renderStatusBadge = (status: string) => {
+    switch (status) {
+      case "authorized":
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+            Authorized
+          </span>
+        );
+      case "blocked":
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-50 text-red-700 border border-red-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-600" />
+            Blocked
+          </span>
+        );
+      case "revoked":
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-orange-50 text-orange-700 border border-orange-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-orange-600" />
+            Revoked
+          </span>
+        );
+      case "pending":
+      default:
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />
+            Pending Authorization
+          </span>
+        );
+    }
+  };
+
+  return (
+    <SectionCard id="allow-devices">
+      <SectionHeader
+        icon={ShieldCheck}
+        title="Allow Devices (Browser ID Access Control)"
+        desc="Browser-specific authorization system. Only approved browser instances receive permission to access /admin/login and the Admin Panel."
+      />
+
+      <div className="p-6 space-y-6">
+        {/* Current Browser Identity Callout */}
+        <div className="bg-gradient-to-r from-slate-900 to-[#0A1F44] rounded-2xl p-4 sm:p-5 text-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm border border-slate-700">
+          <div className="flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center shrink-0 border border-white/10">
+              <Laptop size={20} className="text-cyan-400" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs uppercase tracking-wider text-slate-300 font-semibold">Your Current Browser ID</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-mono border border-cyan-400/30">
+                  Active Profile
+                </span>
+              </div>
+              <div className="font-mono text-sm sm:text-base font-bold text-white tracking-wide mt-0.5 select-all">
+                {currentBrowserId || "Loading..."}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 self-end sm:self-center">
+            <button
+              onClick={() => copyToClipboard(currentBrowserId)}
+              className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 border border-white/10"
+              title="Copy Browser ID"
+            >
+              {copiedId === currentBrowserId ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+              <span>{copiedId === currentBrowserId ? "Copied" : "Copy Browser ID"}</span>
+            </button>
+            <button
+              onClick={handleFillCurrentBrowser}
+              className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-xs"
+            >
+              <CheckCircle2 size={13} />
+              <span>Use in Form</span>
+            </button>
+          </div>
+        </div>
+
+        {/* ── 1. Dashboard Statistics (6 cards) ────────────────────────────── */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {/* Total Registered */}
+          <div className="bg-gray-50 border border-gray-200/70 rounded-xl p-3.5 flex flex-col justify-between">
+            <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Total Registered</span>
+            <div className="flex items-baseline justify-between mt-2">
+              <span className="text-2xl font-bold text-gray-900">{stats.total}</span>
+              <Smartphone size={16} className="text-gray-400" />
+            </div>
+          </div>
+
+          {/* Authorized */}
+          <div className="bg-emerald-50/70 border border-emerald-200/70 rounded-xl p-3.5 flex flex-col justify-between">
+            <span className="text-[11px] font-semibold text-emerald-800 uppercase tracking-wider">Authorized</span>
+            <div className="flex items-baseline justify-between mt-2">
+              <span className="text-2xl font-bold text-emerald-700">{stats.authorized}</span>
+              <ShieldCheck size={16} className="text-emerald-600" />
+            </div>
+          </div>
+
+          {/* Pending Requests */}
+          <div className="bg-amber-50/70 border border-amber-200/70 rounded-xl p-3.5 flex flex-col justify-between">
+            <span className="text-[11px] font-semibold text-amber-800 uppercase tracking-wider">Pending Requests</span>
+            <div className="flex items-baseline justify-between mt-2">
+              <span className="text-2xl font-bold text-amber-700">{stats.pending}</span>
+              <Clock size={16} className="text-amber-600" />
+            </div>
+          </div>
+
+          {/* Unauthorized */}
+          <div className="bg-blue-50/70 border border-blue-200/70 rounded-xl p-3.5 flex flex-col justify-between">
+            <span className="text-[11px] font-semibold text-blue-800 uppercase tracking-wider">Unauthorized</span>
+            <div className="flex items-baseline justify-between mt-2">
+              <span className="text-2xl font-bold text-blue-700">{stats.unauthorized ?? stats.pending}</span>
+              <ShieldAlert size={16} className="text-blue-600" />
+            </div>
+          </div>
+
+          {/* Blocked */}
+          <div className="bg-red-50/70 border border-red-200/70 rounded-xl p-3.5 flex flex-col justify-between">
+            <span className="text-[11px] font-semibold text-red-800 uppercase tracking-wider">Blocked</span>
+            <div className="flex items-baseline justify-between mt-2">
+              <span className="text-2xl font-bold text-red-700">{stats.blocked}</span>
+              <Ban size={16} className="text-red-600" />
+            </div>
+          </div>
+
+          {/* Revoked */}
+          <div className="bg-orange-50/70 border border-orange-200/70 rounded-xl p-3.5 flex flex-col justify-between">
+            <span className="text-[11px] font-semibold text-orange-800 uppercase tracking-wider">Revoked</span>
+            <div className="flex items-baseline justify-between mt-2">
+              <span className="text-2xl font-bold text-orange-700">{stats.revoked}</span>
+              <AlertTriangle size={16} className="text-orange-600" />
+            </div>
+          </div>
+        </div>
+
+        {/* ── 2. Allow Browser Form ─────────────────────────────────────────── */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-2xs space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+            <div>
+              <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+                <ShieldCheck size={16} className="text-[#0D1B36]" />
+                Allow Browser Registration Form
+              </h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Enter an administrator's unique Browser ID to grant or block perimeter access to /admin/login. Duplicate registrations are prevented.
+              </p>
+            </div>
+          </div>
+
+          <form onSubmit={handleAllowDeviceSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+              {/* Browser ID (Required) */}
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  Browser ID <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={browserIdInput}
+                    onChange={(e) => setBrowserIdInput(e.target.value.toUpperCase().trim())}
+                    placeholder="e.g. BID-A1B2-C3D4-E5F6"
+                    required
+                    className="w-full font-mono text-sm px-3.5 py-2.5 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-[#0D1B36] focus:border-transparent uppercase"
+                  />
+                  {browserIdInput && (
+                    <button
+                      type="button"
+                      onClick={() => setBrowserIdInput("")}
+                      className="absolute right-3 top-3 text-gray-400 hover:text-gray-600"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                <p className="text-[11px] text-gray-500 mt-1">
+                  Unique browser profile identifier bound to a cryptographic keypair.
+                </p>
+              </div>
+
+              {/* Browser Name (Optional) */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  Browser Name <span className="text-gray-400 font-normal">(Optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={browserNameInput}
+                  onChange={(e) => setBrowserNameInput(e.target.value)}
+                  placeholder="e.g. Google Chrome, Edge"
+                  className="w-full text-sm px-3.5 py-2.5 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-[#0D1B36] focus:border-transparent"
+                />
+                <p className="text-[11px] text-gray-500 mt-1">Browser application name.</p>
+              </div>
+
+              {/* Device Name (Optional) */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  Device Name <span className="text-gray-400 font-normal">(Optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={deviceNameInput}
+                  onChange={(e) => setDeviceNameInput(e.target.value)}
+                  placeholder="e.g. CEO MacBook, Office PC"
+                  className="w-full text-sm px-3.5 py-2.5 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-[#0D1B36] focus:border-transparent"
+                />
+                <p className="text-[11px] text-gray-500 mt-1">Associated hardware machine.</p>
+              </div>
+
+              {/* Status (Authorized / Blocked) */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  Status
+                </label>
+                <select
+                  value={deviceStatusInput}
+                  onChange={(e) => setDeviceStatusInput(e.target.value as "authorized" | "blocked")}
+                  className="w-full text-sm px-3.5 py-2.5 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-[#0D1B36] focus:border-transparent bg-white"
+                >
+                  <option value="authorized">Authorized (Allow Access)</option>
+                  <option value="blocked">Blocked (Deny Access)</option>
+                </select>
+                <p className="text-[11px] text-gray-500 mt-1">Default access posture.</p>
+              </div>
+            </div>
+
+            {/* Description (Optional) */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-700 mb-1">
+                Description / Security Notes <span className="text-gray-400 font-normal">(Optional)</span>
+              </label>
+              <input
+                type="text"
+                value={descriptionInput}
+                onChange={(e) => setDescriptionInput(e.target.value)}
+                placeholder="e.g. Authorized primary browser for catalog operations, approved on Nov 2026."
+                className="w-full text-sm px-3.5 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-[#0D1B36] focus:border-transparent"
+              />
+            </div>
+
+            {/* Form Action Buttons */}
+            <div className="flex items-center justify-between pt-2">
+              <button
+                type="button"
+                onClick={handleFillCurrentBrowser}
+                className="text-xs text-[#0D1B36] hover:underline font-medium flex items-center gap-1"
+              >
+                <Laptop size={13} />
+                <span>Fill current browser profile identifier</span>
+              </button>
+
+              <button
+                type="submit"
+                disabled={submitting || !browserIdInput.trim()}
+                className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-[#0D1B36] hover:bg-[#071329] transition-all flex items-center gap-2 shadow-xs disabled:opacity-50"
+              >
+                {submitting ? (
+                  <Loader2 size={16} className="animate-spin text-cyan-400" />
+                ) : (
+                  <ShieldCheck size={16} className="text-emerald-400" />
+                )}
+                <span>{deviceStatusInput === "authorized" ? "Allow Browser" : "Register as Blocked"}</span>
+              </button>
+            </div>
+          </form>
+        </div>
+
+        {/* ── 3. Device Management & Tabs ──────────────────────────────────── */}
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-gray-200 pb-3">
+            {/* View Tabs */}
+            <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl">
+              <button
+                onClick={() => setActiveTab("devices")}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  activeTab === "devices"
+                    ? "bg-white text-gray-900 shadow-2xs"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Registered Browsers ({devices.length})
+              </button>
+              <button
+                onClick={() => setActiveTab("activities")}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                  activeTab === "activities"
+                    ? "bg-white text-gray-900 shadow-2xs"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                <Activity size={13} />
+                <span>Activity & Audit Trail</span>
+              </button>
+            </div>
+
+            {/* Search and Refresh */}
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              {activeTab === "devices" && (
+                <div className="relative flex-1 sm:w-64">
+                  <Search size={14} className="absolute left-3 top-2.5 text-gray-400" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search Browser ID, name, IP..."
+                    className="w-full text-xs pl-8 pr-3 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-[#0D1B36]"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery("")}
+                      className="absolute right-2.5 top-2.5 text-gray-400 hover:text-gray-600"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <button
+                onClick={() => (activeTab === "devices" ? refetchDevices() : refetchActivities())}
+                className="p-2 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-600 transition-colors shrink-0"
+                title="Refresh List"
+              >
+                <RefreshCw size={14} className={devicesLoading || activitiesLoading ? "animate-spin" : ""} />
+              </button>
+            </div>
+          </div>
+
+          {activeTab === "devices" ? (
+            <>
+              {/* Status Filter Tabs */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+                {[
+                  { id: "all", label: "All Browsers", count: stats.total },
+                  { id: "authorized", label: "Authorized", count: stats.authorized },
+                  { id: "pending", label: "Pending", count: stats.pending },
+                  { id: "blocked", label: "Blocked", count: stats.blocked },
+                  { id: "revoked", label: "Revoked", count: stats.revoked },
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => setStatusFilter(t.id)}
+                    className={`px-3 py-1.5 rounded-lg font-medium transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+                      statusFilter === t.id
+                        ? "bg-[#0D1B36] text-white"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    }`}
+                  >
+                    <span>{t.label}</span>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                        statusFilter === t.id ? "bg-white/20 text-white" : "bg-white text-gray-600"
+                      }`}
+                    >
+                      {t.count}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Browsers Table */}
+              <div className="border border-gray-200 rounded-2xl overflow-hidden bg-white shadow-2xs">
+                {devicesLoading ? (
+                  <div className="p-12 text-center text-gray-500 text-sm flex items-center justify-center gap-2">
+                    <Loader2 size={16} className="animate-spin text-[#0D1B36]" />
+                    <span>Loading registered browsers...</span>
+                  </div>
+                ) : devices.length === 0 ? (
+                  <div className="p-12 text-center">
+                    <ShieldAlert size={36} className="mx-auto text-gray-300 mb-2" />
+                    <p className="text-sm font-semibold text-gray-700">No browsers found</p>
+                    <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
+                      {searchQuery
+                        ? "No browsers match the given search query."
+                        : "No browsers registered under this status. Use the form above to allow a browser."}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-200 text-gray-500 font-semibold uppercase tracking-wider text-[11px]">
+                          <th className="py-3 px-4">Browser Name</th>
+                          <th className="py-3 px-4">Browser ID</th>
+                          <th className="py-3 px-4">Device Name</th>
+                          <th className="py-3 px-4">Authorization Status</th>
+                          <th className="py-3 px-4">Authorized Date</th>
+                          <th className="py-3 px-4">Last Access Date</th>
+                          <th className="py-3 px-4 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {devices.map((device) => {
+                          const isCurrent = device.deviceId === currentBrowserId;
+                          const loading = actionLoadingId === device.deviceId;
+                          return (
+                            <tr key={device.deviceId} className="hover:bg-gray-50/80 transition-colors">
+                              {/* 1. Browser Name */}
+                              <td className="py-3 px-4">
+                                <div className="font-semibold text-gray-900">
+                                  {device.browser || device.deviceName || "Web Browser"}
+                                </div>
+                                <div className="text-[10px] text-gray-400 capitalize">
+                                  {device.deviceType || "desktop"}
+                                </div>
+                              </td>
+
+                              {/* 2. Browser ID */}
+                              <td className="py-3 px-4">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono font-bold text-gray-900 select-all">
+                                    {device.deviceId}
+                                  </span>
+                                  <button
+                                    onClick={() => copyToClipboard(device.deviceId)}
+                                    className="text-gray-400 hover:text-gray-600 p-1"
+                                    title="Copy Browser ID"
+                                  >
+                                    {copiedId === device.deviceId ? (
+                                      <Check size={12} className="text-emerald-500" />
+                                    ) : (
+                                      <Copy size={12} />
+                                    )}
+                                  </button>
+                                </div>
+                                {isCurrent && (
+                                  <span className="inline-block mt-0.5 text-[10px] px-2 py-0.2 rounded-full font-semibold bg-cyan-100 text-cyan-800 border border-cyan-200">
+                                    This Browser
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* 3. Device Name */}
+                              <td className="py-3 px-4">
+                                <div className="font-medium text-gray-800">
+                                  {device.deviceName || device.os || "Workstation"}
+                                </div>
+                                <div className="text-[11px] text-gray-500 mt-0.5">
+                                  {device.os || "OS"}
+                                </div>
+                                {device.deviceDescription && (
+                                  <div className="text-[11px] text-gray-400 italic truncate max-w-xs mt-0.5" title={device.deviceDescription}>
+                                    {device.deviceDescription}
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* 4. Authorization Status */}
+                              <td className="py-3 px-4">
+                                {renderStatusBadge(device.status)}
+                              </td>
+
+                              {/* 5. Authorized Date */}
+                              <td className="py-3 px-4">
+                                <div className="text-gray-800 font-medium">
+                                  {fmtDate(device.authorizedDate || (device.status === "authorized" ? device.createdAt : null))}
+                                </div>
+                                <div className="text-[10px] text-gray-400 mt-0.5">
+                                  By: {device.authorizedBy || (device.status === "authorized" ? "Super Admin" : "—")}
+                                </div>
+                              </td>
+
+                              {/* 6. Last Access Date */}
+                              <td className="py-3 px-4">
+                                <div className="text-gray-800 font-medium">
+                                  {fmtDate(device.lastSeenAt || device.updatedAt)}
+                                </div>
+                                <div className="font-mono text-[10px] text-gray-400 mt-0.5">
+                                  IP: {device.lastLoginIp || device.ipAddress || "127.0.0.1"}
+                                </div>
+                              </td>
+
+                              {/* 7. Actions */}
+                              <td className="py-3 px-4 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  {/* Allow Browser */}
+                                  {device.status !== "authorized" && device.status !== "blocked" && (
+                                    <button
+                                      onClick={() => handleAllowDevice(device.deviceId)}
+                                      disabled={loading}
+                                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-colors"
+                                      title="Allow Browser"
+                                    >
+                                      Allow Browser
+                                    </button>
+                                  )}
+
+                                  {/* Unblock Browser (if blocked) */}
+                                  {device.status === "blocked" && (
+                                    <button
+                                      onClick={() => handleUnblockDevice(device.deviceId)}
+                                      disabled={loading}
+                                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-colors"
+                                      title="Unblock Browser"
+                                    >
+                                      Unblock Browser
+                                    </button>
+                                  )}
+
+                                  {/* Block Browser (if not blocked) */}
+                                  {device.status !== "blocked" && (
+                                    <button
+                                      onClick={() => handleBlockDevice(device.deviceId)}
+                                      disabled={loading}
+                                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 transition-colors"
+                                      title="Block Browser & Invalidate Sessions"
+                                    >
+                                      Block Browser
+                                    </button>
+                                  )}
+
+                                  {/* Revoke Access (if authorized) */}
+                                  {device.status === "authorized" && (
+                                    <button
+                                      onClick={() => handleRevokeDevice(device.deviceId)}
+                                      disabled={loading}
+                                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-200 transition-colors"
+                                      title="Revoke Access"
+                                    >
+                                      Revoke
+                                    </button>
+                                  )}
+
+                                  {/* View Details */}
+                                  <button
+                                    onClick={() => setSelectedDevice(device)}
+                                    className="px-2 py-1 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-100 border border-gray-200 transition-colors"
+                                    title="View Details"
+                                  >
+                                    Details
+                                  </button>
+
+                                  {/* Delete Record */}
+                                  <button
+                                    onClick={() => handleDeleteDevice(device.deviceId)}
+                                    disabled={loading}
+                                    className="p-1 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                                    title="Delete Browser Record"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            /* ── Activity Logs View ────────────────────────────────────────── */
+            <div className="border border-gray-200 rounded-2xl overflow-hidden bg-white shadow-2xs">
+              {activitiesLoading ? (
+                <div className="p-12 text-center text-gray-500 text-sm flex items-center justify-center gap-2">
+                  <Loader2 size={16} className="animate-spin text-[#0D1B36]" />
+                  <span>Loading browser audit trail...</span>
+                </div>
+              ) : activities.length === 0 ? (
+                <div className="p-12 text-center text-gray-500 text-sm">
+                  <Activity size={32} className="mx-auto text-gray-300 mb-2" />
+                  No browser activity recorded yet.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200 text-gray-500 font-semibold uppercase tracking-wider text-[11px]">
+                        <th className="py-3 px-4">Timestamp</th>
+                        <th className="py-3 px-4">Browser ID</th>
+                        <th className="py-3 px-4">Action / Event</th>
+                        <th className="py-3 px-4">Outcome</th>
+                        <th className="py-3 px-4">Administrator</th>
+                        <th className="py-3 px-4">IP Address</th>
+                        <th className="py-3 px-4">Details</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {activities.map((act, idx) => (
+                        <tr key={act.id || idx} className="hover:bg-gray-50/80 transition-colors">
+                          <td className="py-2.5 px-4 text-gray-500 whitespace-nowrap">
+                            {fmtDate(act.timestamp)}
+                          </td>
+                          <td className="py-2.5 px-4 font-mono font-medium text-gray-900 select-all">
+                            {act.deviceId}
+                          </td>
+                          <td className="py-2.5 px-4">
+                            <span className="font-semibold text-gray-800 capitalize">
+                              {act.action?.replace(/_/g, " ")}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-4">
+                            {act.result === "success" ? (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                SUCCESS
+                              </span>
+                            ) : (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-red-50 text-red-700 border border-red-200">
+                                FAILED
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-4 text-gray-700">
+                            {act.administrator || "System"}
+                          </td>
+                          <td className="py-2.5 px-4 font-mono text-[11px] text-gray-600">
+                            {act.ipAddress || "—"}
+                          </td>
+                          <td className="py-2.5 px-4 text-gray-500 text-[11px] max-w-xs truncate" title={JSON.stringify(act.details ?? {})}>
+                            {act.reason || (act.details ? JSON.stringify(act.details) : "—")}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── 4. View Device Details Modal ───────────────────────────────────── */}
+      {selectedDevice && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-xl w-full border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="bg-[#0D1B36] text-white p-5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Laptop size={20} className="text-cyan-400" />
+                <div>
+                  <h3 className="text-base font-bold text-white">Browser & Device Information</h3>
+                  <p className="text-xs text-slate-300">Detailed browser identity and cryptographic specifications</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedDevice(null)}
+                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-slate-300 hover:text-white transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+              <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Browser ID</span>
+                {renderStatusBadge(selectedDevice.status)}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="flex-1 font-mono text-sm font-bold text-gray-900 bg-gray-50 px-3.5 py-2.5 rounded-xl border border-gray-200 select-all">
+                  {selectedDevice.deviceId}
+                </div>
+                <button
+                  onClick={() => copyToClipboard(selectedDevice.deviceId)}
+                  className="p-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-medium transition-colors"
+                  title="Copy ID"
+                >
+                  <Copy size={14} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 text-xs pt-1">
+                <div className="p-3 bg-gray-50 rounded-xl">
+                  <span className="text-gray-400 block text-[11px]">Browser Name</span>
+                  <span className="font-semibold text-gray-900 block mt-0.5">
+                    {selectedDevice.browser || selectedDevice.deviceName || "Web Browser"}
+                  </span>
+                </div>
+                <div className="p-3 bg-gray-50 rounded-xl">
+                  <span className="text-gray-400 block text-[11px]">Device Name</span>
+                  <span className="font-semibold text-gray-900 block mt-0.5">
+                    {selectedDevice.deviceName || selectedDevice.os || "Workstation"}
+                  </span>
+                </div>
+                <div className="p-3 bg-gray-50 rounded-xl">
+                  <span className="text-gray-400 block text-[11px]">Device Type</span>
+                  <span className="font-semibold text-gray-900 block mt-0.5 capitalize">
+                    {selectedDevice.deviceType || "desktop"}
+                  </span>
+                </div>
+                <div className="p-3 bg-gray-50 rounded-xl">
+                  <span className="text-gray-400 block text-[11px]">Operating System</span>
+                  <span className="font-semibold text-gray-900 block mt-0.5">
+                    {selectedDevice.os || "Unknown"}
+                  </span>
+                </div>
+              </div>
+
+              {selectedDevice.deviceDescription && (
+                <div className="p-3 bg-gray-50 rounded-xl text-xs">
+                  <span className="text-gray-400 block text-[11px]">Description</span>
+                  <span className="text-gray-800 block mt-0.5">{selectedDevice.deviceDescription}</span>
+                </div>
+              )}
+
+              {/* Cryptographic Public Key */}
+              <div className="p-3 bg-slate-900 text-slate-200 rounded-xl text-xs space-y-1">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                    <KeyRound size={12} className="text-cyan-400" />
+                    Web Crypto ECDSA P-256 Public Key
+                  </span>
+                  <span className="text-[10px] text-cyan-300">SPKI Encoded</span>
+                </div>
+                <div className="font-mono text-[10px] break-all text-slate-300 bg-black/40 p-2 rounded-lg select-all">
+                  {selectedDevice.publicKey || "Hardware public key not yet submitted."}
+                </div>
+              </div>
+
+              {/* Security & Audit Metadata */}
+              <div className="grid grid-cols-2 gap-3 text-xs pt-1 border-t border-gray-100">
+                <div>
+                  <span className="text-gray-400 block text-[11px]">Registered IP</span>
+                  <span className="font-mono text-gray-800 block mt-0.5">
+                    {selectedDevice.ipAddress || "127.0.0.1"}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-400 block text-[11px]">Last Seen IP</span>
+                  <span className="font-mono text-gray-800 block mt-0.5">
+                    {selectedDevice.lastLoginIp || selectedDevice.ipAddress || "127.0.0.1"}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-400 block text-[11px]">Authorized By</span>
+                  <span className="font-semibold text-gray-800 block mt-0.5">
+                    {selectedDevice.authorizedBy || "—"}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-400 block text-[11px]">Authorized Date</span>
+                  <span className="text-gray-700 block mt-0.5">
+                    {fmtDate(selectedDevice.authorizedDate)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-400 block text-[11px]">Created At</span>
+                  <span className="text-gray-700 block mt-0.5">
+                    {fmtDate(selectedDevice.createdAt)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-400 block text-[11px]">Last Seen</span>
+                  <span className="text-gray-700 block mt-0.5">
+                    {fmtDate(selectedDevice.lastSeenAt)}
+                  </span>
+                </div>
+              </div>
+
+              {selectedDevice.revocationReason && (
+                <div className="p-3 bg-red-50 text-red-900 rounded-xl text-xs border border-red-200">
+                  <span className="font-semibold block">Revocation / Block Reason</span>
+                  <p className="mt-0.5">{selectedDevice.revocationReason}</p>
+                  {selectedDevice.revokedBy && (
+                    <span className="text-[10px] text-red-700 mt-1 block">
+                      Enforced by: {selectedDevice.revokedBy} ({fmtDate(selectedDevice.revokedDate)})
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Actions */}
+            <div className="bg-gray-50 px-6 py-4 border-t border-gray-100 flex items-center justify-between gap-2">
+              <button
+                onClick={() => handleDeleteDevice(selectedDevice.deviceId)}
+                className="text-xs text-red-600 hover:text-red-700 font-semibold flex items-center gap-1.5"
+              >
+                <Trash2 size={13} />
+                <span>Delete Record</span>
+              </button>
+
+              <div className="flex items-center gap-2">
+                {selectedDevice.status !== "authorized" && selectedDevice.status !== "blocked" && (
+                  <button
+                    onClick={() => handleAllowDevice(selectedDevice.deviceId)}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-2xs"
+                  >
+                    Allow Browser
+                  </button>
+                )}
+                {selectedDevice.status === "blocked" && (
+                  <button
+                    onClick={() => handleUnblockDevice(selectedDevice.deviceId)}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-2xs"
+                  >
+                    Unblock Browser
+                  </button>
+                )}
+                {selectedDevice.status === "authorized" && (
+                  <>
+                    <button
+                      onClick={() => handleRevokeDevice(selectedDevice.deviceId)}
+                      className="px-3.5 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-xs font-semibold shadow-2xs"
+                    >
+                      Revoke Access
+                    </button>
+                    <button
+                      onClick={() => handleBlockDevice(selectedDevice.deviceId)}
+                      className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-semibold shadow-2xs"
+                    >
+                      Block Browser
+                    </button>
+                  </>
+                )}
+                <button
+                  onClick={() => setSelectedDevice(null)}
+                  className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl text-xs font-semibold transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </SectionCard>
   );
@@ -1297,110 +2752,12 @@ function PermissionsSection() {
 }
 
 // ─── Notification Preferences ─────────────────────────────────────────────────
-const NOTIF_CATEGORIES = [
-  { key: "new_order",                label: "New Order",               desc: "When a customer places an order" },
-  { key: "new_vendor_registration",  label: "New Vendor Registration", desc: "Seller submits a new registration" },
-  { key: "vendor_approval_required", label: "Vendor Approval Required",desc: "KYC docs submitted and awaiting review" },
-  { key: "vendor_dispute",           label: "Vendor Dispute",          desc: "Seller raises a dispute or escalation" },
-  { key: "refund_request",           label: "Refund Request",          desc: "Customer submits a refund request" },
-  { key: "support_ticket",           label: "Support Ticket",          desc: "New support ticket opened" },
-  { key: "payment_failure",          label: "Payment Failure",         desc: "A payment transaction fails" },
-  { key: "shipping_issue",           label: "Shipping Issue",          desc: "Delivery or shipment problem detected" },
-  { key: "system_error",             label: "System Error",            desc: "Backend or integration error alert" },
-  { key: "security_login_alert",     label: "Security / Login Alert",  desc: "Admin login or access-key change" },
-];
-
-function ToggleSwitch({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
-  return (
-    <button
-      type="button"
-      onClick={() => !disabled && onChange(!checked)}
-      disabled={disabled}
-      className={`w-9 h-5 rounded-full relative transition-colors focus:outline-none shrink-0 ${disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}`}
-      style={{ background: checked ? NAVY : "#E5E7EB" }}
-    >
-      <div
-        className="w-4 h-4 rounded-full bg-white shadow-sm absolute top-0.5 transition-transform"
-        style={{ transform: checked ? "translateX(16px)" : "translateX(2px)" }}
-      />
-    </button>
-  );
-}
-
 function NotificationPrefsSection() {
-  const { toast } = useToast();
-  const qc = useQueryClient();
-
-  type NotifPrefs = Record<string, { email: boolean; inApp: boolean; sms: boolean }>;
-
-  const { data, isLoading, error } = useQuery<{ prefs: NotifPrefs }>({
-    queryKey: ["admin-notif-prefs"],
-    queryFn: () => apiFetch("/api/admin/settings/notification-prefs"),
-  });
-
-  const save = useMutation({
-    mutationFn: (prefs: NotifPrefs) =>
-      apiFetch("/api/admin/settings/notification-prefs", { method: "PATCH", body: JSON.stringify({ prefs }) }),
-    onSuccess: () => {
-      toast({ title: "Preferences saved" });
-      qc.invalidateQueries({ queryKey: ["admin-notif-prefs"] });
-    },
-    onError: (e: Error) => toast({ title: "Failed to save", description: e.message, variant: "destructive" }),
-  });
-
-  function toggle(catKey: string, channel: "email" | "inApp" | "sms", value: boolean) {
-    if (!data?.prefs) return;
-    const updated: NotifPrefs = { ...data.prefs, [catKey]: { ...data.prefs[catKey], [channel]: value } };
-    save.mutate(updated);
-  }
-
   return (
     <SectionCard id="notifications">
       <SectionHeader icon={Bell} title="Admin Notification Preferences" desc="Choose which channels receive alerts for each event category" />
       <div className="px-6 py-4">
-        {isLoading ? (
-          <div className="flex gap-2 items-center text-sm text-gray-400 py-4"><Loader2 size={14} className="animate-spin" />Loading…</div>
-        ) : error ? (
-          <p className="text-sm text-red-600 py-4">Unable to load notification preferences.</p>
-        ) : (
-          <>
-          <div className="mb-3 p-3 rounded-lg bg-blue-50 border border-blue-100 flex gap-2.5">
-            <Bell size={14} className="text-blue-500 shrink-0 mt-0.5" />
-            <p className="text-xs text-blue-800">
-              <span className="font-semibold">In-App</span> alerts are fully wired — toggling off suppresses the admin notification bell.
-              Email and SMS delivery for admin alerts is planned for Phase 3.
-            </p>
-          </div>
-          <div className="overflow-x-auto rounded-xl border border-gray-100">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50 text-xs text-gray-500 font-semibold uppercase tracking-wider">
-                  <th className="px-4 py-3 text-left">Event</th>
-                  <th className="px-4 py-3 text-center w-20">Email</th>
-                  <th className="px-4 py-3 text-center w-20">In-App</th>
-                  <th className="px-4 py-3 text-center w-20">SMS</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {NOTIF_CATEGORIES.map(({ key, label, desc }) => {
-                  const pref = data?.prefs?.[key] ?? { email: true, inApp: true, sms: false };
-                  return (
-                    <tr key={key} className="hover:bg-gray-50/50">
-                      <td className="px-4 py-3">
-                        <p className="font-medium text-gray-900 text-sm">{label}</p>
-                        <p className="text-xs text-gray-400">{desc}</p>
-                      </td>
-                      <td className="px-4 py-3"><div className="flex justify-center"><ToggleSwitch checked={pref.email} onChange={v => toggle(key, "email", v)} disabled={save.isPending} /></div></td>
-                      <td className="px-4 py-3"><div className="flex justify-center"><ToggleSwitch checked={pref.inApp} onChange={v => toggle(key, "inApp", v)} disabled={save.isPending} /></div></td>
-                      <td className="px-4 py-3"><div className="flex justify-center"><ToggleSwitch checked={pref.sms}   onChange={v => toggle(key, "sms",   v)} disabled={save.isPending} /></div></td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          </>
-        )}
+        <AdminNotificationPrefs embedded />
       </div>
     </SectionCard>
   );
@@ -1855,6 +3212,35 @@ function formatUptime(seconds: number): string {
 function StatusDot({ ok }: { ok: boolean }) {
   return (
     <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${ok ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
+  );
+}
+
+function ToggleSwitch({
+  checked,
+  onChange,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => !disabled && onChange(!checked)}
+      disabled={disabled}
+      className={`w-9 h-5 rounded-full relative transition-colors focus:outline-none shrink-0 ${
+        disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer"
+      }`}
+      style={{ background: checked ? NAVY : "#E5E7EB" }}
+    >
+      <div
+        className="w-4 h-4 rounded-full bg-white shadow-sm absolute top-0.5 transition-transform"
+        style={{ transform: checked ? "translateX(16px)" : "translateX(2px)" }}
+      />
+    </button>
   );
 }
 
@@ -2973,6 +4359,7 @@ export default function AdminSettings() {
           {/* Phase 1: functional sections */}
           <ProfileSection />
           <SecuritySection />
+          <AllowDevicesSection />
           <LoginActivitySection />
           <ActiveSessionsSection />
 

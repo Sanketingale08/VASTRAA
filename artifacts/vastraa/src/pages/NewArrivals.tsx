@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Link } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowRight, Home, ChevronRight, ChevronDown } from "lucide-react";
+import { ArrowRight, Home, ChevronRight, ChevronDown, Sparkles, Gem } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { ProductCard } from "@/components/ProductCard";
 import { QuickViewModal } from "@/components/QuickViewModal";
@@ -122,7 +122,10 @@ export default function NewArrivals() {
                     : "bg-white border-[#C7CCD1]/40 text-[#3D1A1A]/80 hover:border-[#0A1F44]/40 hover:text-[#0A1F44]"
                 )}
               >
-                💎 Designer Sarees
+                <span className="inline-flex items-center gap-1.5">
+                  <Gem size={13} className="shrink-0" />
+                  Designer Sarees
+                </span>
               </button>
             </div>
 
@@ -168,8 +171,8 @@ export default function NewArrivals() {
             </div>
           ) : products.length === 0 ? (
             <div className="bg-white rounded-2xl border border-[#C7CCD1]/30 p-12 text-center my-4 shadow-xs">
-              <div className="w-16 h-16 bg-[#F4F5F7] rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">
-                ✨
+              <div className="w-16 h-16 bg-[#F4F5F7] rounded-full flex items-center justify-center mx-auto mb-4 text-[#D4AF37]">
+                <Sparkles className="w-8 h-8" />
               </div>
               <h3 className="font-serif text-xl sm:text-2xl font-bold text-[#0A1F44] mb-2">No products available at the moment.</h3>
               <p className="text-gray-500 text-sm max-w-md mx-auto mb-6">

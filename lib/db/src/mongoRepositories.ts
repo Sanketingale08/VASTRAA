@@ -16,8 +16,60 @@ import type {
   SavedPaymentMethod,
   Shipment,
   MongoShipmentDoc,
+  AdminDevice,
+  AdminDeviceActivity,
 } from "./schema";
 import { CATALOG_CATEGORIES, PRESERVED_SAREE_CATEGORIES, registerDynamicSubcategory, findCategoryDefinition } from "./categories";
+
+// ─── PHONE / EMAIL MATCHING UTILITIES ─────────────────────────────────────────
+export function extractPhoneVariants(raw: string): string[] {
+  if (!raw || typeof raw !== "string") return [];
+  const trimmed = raw.trim();
+  const digitsOnly = trimmed.replace(/\D/g, "");
+  const variants = new Set<string>();
+
+  if (digitsOnly.length === 10) {
+    variants.add(digitsOnly);
+    variants.add(`+91${digitsOnly}`);
+    variants.add(`+91 ${digitsOnly}`);
+    variants.add(`91${digitsOnly}`);
+    variants.add(`0${digitsOnly}`);
+  } else if (digitsOnly.length === 12 && digitsOnly.startsWith("91")) {
+    const tenDigits = digitsOnly.slice(2);
+    variants.add(tenDigits);
+    variants.add(`+91${tenDigits}`);
+    variants.add(`+91 ${tenDigits}`);
+    variants.add(digitsOnly);
+    variants.add(`0${tenDigits}`);
+  } else if (digitsOnly.length === 11 && digitsOnly.startsWith("0")) {
+    const tenDigits = digitsOnly.slice(1);
+    variants.add(tenDigits);
+    variants.add(`+91${tenDigits}`);
+    variants.add(`+91 ${tenDigits}`);
+    variants.add(`91${tenDigits}`);
+    variants.add(digitsOnly);
+  } else if (digitsOnly.length >= 7) {
+    variants.add(digitsOnly);
+    variants.add(trimmed);
+  }
+  if (trimmed) {
+    variants.add(trimmed);
+  }
+  return Array.from(variants);
+}
+
+function matchesPhone(storedPhone: string | undefined | null, targetPhoneVariants: string[], rawDigits: string): boolean {
+  if (!storedPhone || typeof storedPhone !== "string") return false;
+  const cleanStored = storedPhone.trim();
+  if (targetPhoneVariants.includes(cleanStored)) return true;
+  const storedDigits = cleanStored.replace(/\D/g, "");
+  if (rawDigits && rawDigits.length >= 10 && storedDigits.length >= 10) {
+    const rawLast10 = rawDigits.slice(-10);
+    const storedLast10 = storedDigits.slice(-10);
+    return rawLast10 === storedLast10;
+  }
+  return false;
+}
 
 // ─── SELLERS / VENDORS ────────────────────────────────────────────────────────
 const inMemorySellersMap = new Map<string, Seller & Vendor>();
@@ -61,12 +113,26 @@ function deduplicateSellers(sellers: (Seller & Vendor)[]): (Seller & Vendor)[] {
 
 export const mongoSellers = {
   async findById(id: string): Promise<(Seller & Vendor) | null> {
-    if (!id) return null;
+    if (!id || typeof id !== "string") return null;
+    const cleanId = id.trim();
+    if (!cleanId) return null;
     if (isMongoDbConnected()) {
       try {
-        const orList: any[] = [{ id }, { sellerId: id }, { vendorId: id }, { ownerId: id }, { userId: id }, { _id: id as any }];
-        if (typeof id === "string" && ObjectId.isValid(id)) {
-          orList.push({ _id: new ObjectId(id) as any });
+        const escaped = cleanId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const idRegex = new RegExp(`^\\s*${escaped}\\s*$`, "i");
+        const orList: any[] = [
+          { id: cleanId },
+          { sellerId: cleanId },
+          { vendorId: cleanId },
+          { ownerId: cleanId },
+          { userId: cleanId },
+          { _id: cleanId as any },
+          { id: { $regex: idRegex } },
+          { sellerId: { $regex: idRegex } },
+          { vendorId: { $regex: idRegex } },
+        ];
+        if (ObjectId.isValid(cleanId)) {
+          orList.push({ _id: new ObjectId(cleanId) as any });
         }
         const filter = { $or: orList } as Filter<Seller & Vendor>;
         const colSellers = getCollection<Seller & Vendor>("sellers");
@@ -81,9 +147,15 @@ export const mongoSellers = {
       }
     }
     return (
-      inMemorySellersMap.get(id) ||
+      inMemorySellersMap.get(cleanId) ||
       Array.from(inMemorySellersMap.values()).find(
-        (s) => s.id === id || s.sellerId === id || s.vendorId === id || s.ownerId === id || (s as any).userId === id || (s as any)._id === id
+        (s) =>
+          (s.id && s.id.toLowerCase() === cleanId.toLowerCase()) ||
+          (s.sellerId && s.sellerId.toLowerCase() === cleanId.toLowerCase()) ||
+          (s.vendorId && s.vendorId.toLowerCase() === cleanId.toLowerCase()) ||
+          (s.ownerId && s.ownerId.toLowerCase() === cleanId.toLowerCase()) ||
+          ((s as any).userId && String((s as any).userId).toLowerCase() === cleanId.toLowerCase()) ||
+          ((s as any)._id && String((s as any)._id).toLowerCase() === cleanId.toLowerCase())
       ) ||
       null
     );
@@ -125,6 +197,82 @@ export const mongoSellers = {
           ((s as any).ownerEmail || "").toLowerCase() === cleanEmail
       ) || null
     );
+  },
+
+  async findByEmailOrMobile(identifier: string): Promise<(Seller & Vendor) | null> {
+    if (!identifier || typeof identifier !== "string") return null;
+    const cleanRaw = identifier.trim();
+    if (!cleanRaw) return null;
+
+    const cleanEmail = cleanRaw.toLowerCase();
+    const phoneVariants = extractPhoneVariants(cleanRaw);
+    const rawDigits = cleanRaw.replace(/\D/g, "");
+    const last10 = rawDigits.length >= 10 ? rawDigits.slice(-10) : "";
+    const phoneRegex = last10 ? new RegExp(`^(\\+?91[\\s-]?)?0?${last10}$`) : null;
+    const escaped = cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    if (isMongoDbConnected()) {
+      try {
+        const orConditions: any[] = [
+          { email: cleanEmail },
+          { contactEmail: cleanEmail },
+          { ownerEmail: cleanEmail },
+          { email: { $regex: new RegExp(`^${escaped}$`, "i") } },
+          { contactEmail: { $regex: new RegExp(`^${escaped}$`, "i") } },
+          { ownerEmail: { $regex: new RegExp(`^${escaped}$`, "i") } },
+        ];
+
+        if (phoneVariants.length > 0) {
+          orConditions.push(
+            { mobile: { $in: phoneVariants } },
+            { phone: { $in: phoneVariants } },
+            { contactPhone: { $in: phoneVariants } },
+            { alternateMobile: { $in: phoneVariants } },
+          );
+        }
+        if (phoneRegex) {
+          orConditions.push(
+            { mobile: { $regex: phoneRegex } },
+            { phone: { $regex: phoneRegex } },
+            { contactPhone: { $regex: phoneRegex } },
+            { alternateMobile: { $regex: phoneRegex } },
+          );
+        }
+
+        const filter = { $or: orConditions } as Filter<Seller & Vendor>;
+
+        const colSellers = getCollection<Seller & Vendor>("sellers");
+        const foundSeller = await colSellers.findOne(filter);
+        if (foundSeller) return foundSeller;
+
+        const colVendors = getCollection<Seller & Vendor>("vendors");
+        const foundVendor = await colVendors.findOne(filter);
+        if (foundVendor) return foundVendor;
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+
+    return (
+      Array.from(inMemorySellersMap.values()).find(
+        (s) =>
+          (s.email || "").toLowerCase() === cleanEmail ||
+          (s.contactEmail || "").toLowerCase() === cleanEmail ||
+          ((s as any).ownerEmail || "").toLowerCase() === cleanEmail ||
+          matchesPhone(s.mobile, phoneVariants, rawDigits) ||
+          matchesPhone(s.phone, phoneVariants, rawDigits) ||
+          matchesPhone((s as any).contactPhone, phoneVariants, rawDigits) ||
+          matchesPhone((s as any).alternateMobile, phoneVariants, rawDigits)
+      ) || null
+    );
+  },
+
+  async findByMobile(mobile: string): Promise<(Seller & Vendor) | null> {
+    return this.findByEmailOrMobile(mobile);
+  },
+
+  async findByPhone(phone: string): Promise<(Seller & Vendor) | null> {
+    return this.findByEmailOrMobile(phone);
   },
 
   async findByOwnerId(ownerId: string): Promise<(Seller & Vendor) | null> {
@@ -872,6 +1020,23 @@ export const mongoOrders = {
     return inMemoryOrdersMap.get(id) || Array.from(inMemoryOrdersMap.values()).find(o => o.id === id || o.displayId === id || (o as any)._id === id) || null;
   },
 
+  async findOne(filter: Filter<Order>): Promise<Order | null> {
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection<Order>("orders");
+        const found = await col.findOne(filter);
+        if (found) {
+          inMemoryOrdersMap.set(found.id || (found as any)._id, found);
+          return found;
+        }
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+    const list = await this.findMany(filter, { limit: 1 });
+    return list[0] || null;
+  },
+
   async findMany(filter: Filter<Order> = {}, options: { sort?: Sort; limit?: number; skip?: number; projection?: any } = {}): Promise<Order[]> {
     if (isMongoDbConnected()) {
       try {
@@ -1397,14 +1562,29 @@ export const mongoUsers = {
       try {
         const col = getCollection<User>("users");
         const escaped = cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const filter: Filter<User> = {
+        const emailFilter = {
           $or: [
             { email: cleanEmail },
-            { email: { $regex: new RegExp(`^${escaped}$`, "i") } },
+            { email: { $regex: new RegExp(`^\\s*${escaped}\\s*$`, "i") } },
           ],
         };
+        let filter: Filter<User> = emailFilter;
         if (role) {
-          filter.role = role as any;
+          if (role === "customer") {
+            filter = {
+              $and: [
+                emailFilter,
+                { role: { $in: ["customer", "user", null as any, undefined as any] } },
+              ],
+            } as Filter<User>;
+          } else {
+            filter = {
+              $and: [
+                emailFilter,
+                { role: role as any },
+              ],
+            } as Filter<User>;
+          }
         }
         const found = await col.findOne(filter);
         if (found) {
@@ -1416,11 +1596,86 @@ export const mongoUsers = {
     }
 
     return Array.from(inMemoryUsersMap.values()).find(u => {
-      const uEmail = (u.email || "").toLowerCase();
+      const uEmail = (u.email || "").toLowerCase().trim();
       const matchesEmail = uEmail === cleanEmail;
-      const matchesRole = !role || u.role === role;
+      const matchesRole = !role || u.role === role || (role === "customer" && (u.role === "user" || !u.role));
       return matchesEmail && matchesRole;
     }) || null;
+  },
+  async findByEmailOrPhone(identifier: string, role?: string): Promise<User | null> {
+    if (!identifier || typeof identifier !== "string") return null;
+    const cleanRaw = identifier.trim();
+    if (!cleanRaw) return null;
+
+    const cleanEmail = cleanRaw.toLowerCase();
+    const phoneVariants = extractPhoneVariants(cleanRaw);
+    const rawDigits = cleanRaw.replace(/\D/g, "");
+    const last10 = rawDigits.length >= 10 ? rawDigits.slice(-10) : "";
+    const phoneRegex = last10 ? new RegExp(`^(\\+?91[\\s-]?)?0?${last10}$`) : null;
+    const escaped = cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection<User>("users");
+        const orConditions: any[] = [
+          { email: cleanEmail },
+          { email: { $regex: new RegExp(`^\\s*${escaped}\\s*$`, "i") } },
+        ];
+
+        if (phoneVariants.length > 0) {
+          orConditions.push(
+            { phone: { $in: phoneVariants } },
+            { mobile: { $in: phoneVariants } },
+            { alternateMobile: { $in: phoneVariants } },
+          );
+        }
+        if (phoneRegex) {
+          orConditions.push(
+            { phone: { $regex: phoneRegex } },
+            { mobile: { $regex: phoneRegex } },
+            { alternateMobile: { $regex: phoneRegex } },
+          );
+        }
+
+        const baseFilter = { $or: orConditions };
+        let filter: Filter<User> = baseFilter as Filter<User>;
+        if (role) {
+          if (role === "customer") {
+            filter = {
+              $and: [
+                baseFilter,
+                { role: { $in: ["customer", "user", null as any, undefined as any] } },
+              ],
+            } as Filter<User>;
+          } else {
+            filter = {
+              $and: [
+                baseFilter,
+                { role: role as any },
+              ],
+            } as Filter<User>;
+          }
+        }
+        const found = await col.findOne(filter);
+        if (found) return found;
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+
+    return Array.from(inMemoryUsersMap.values()).find(u => {
+      const uEmail = (u.email || "").toLowerCase().trim();
+      const matchesEmail = uEmail === cleanEmail;
+      const matchesPhoneNum =
+        matchesPhone(u.phone, phoneVariants, rawDigits) ||
+        matchesPhone((u as any).mobile, phoneVariants, rawDigits) ||
+        matchesPhone(u.alternateMobile, phoneVariants, rawDigits);
+      const matchesRole = !role || u.role === role || (role === "customer" && (u.role === "user" || !u.role));
+      return (matchesEmail || matchesPhoneNum) && matchesRole;
+    }) || null;
+  },
+  async findByPhone(phone: string, role?: string): Promise<User | null> {
+    return this.findByEmailOrPhone(phone, role);
   },
   async findByGoogleId(googleId: string): Promise<User | null> {
     if (!googleId) return null;
@@ -1674,12 +1929,23 @@ function formatCouponDoc(c: any) {
     if (eligibleCategories.length === 0) eligibleCategories = null;
   }
 
+  let applicableProducts: string[] | null = null;
+  const rawProds = c.applicableProducts ?? c.products;
+  if (Array.isArray(rawProds)) {
+    const arr = rawProds.map((s: any) => String(s).trim()).filter(Boolean);
+    applicableProducts = arr.length > 0 ? arr : null;
+  } else if (typeof rawProds === "string" && rawProds.trim()) {
+    applicableProducts = rawProds.split(",").map((s: string) => s.trim()).filter(Boolean);
+    if (applicableProducts.length === 0) applicableProducts = null;
+  }
+
   return {
     ...c,
     id: c.id || c._id,
     minimumOrderValue: typeof c.minimumOrderValue === "number" ? c.minimumOrderValue : Number(c.minimumOrderValue || 0),
     maxDiscountAmount: c.maxDiscountAmount != null ? Number(c.maxDiscountAmount) : null,
     eligibleCategories,
+    applicableProducts,
     firstOrderOnly: Boolean(c.firstOrderOnly),
     perCustomerLimit: c.perCustomerLimit != null ? Number(c.perCustomerLimit) : null,
     startDate: c.startDate ? new Date(c.startDate) : null,
@@ -1779,6 +2045,16 @@ export const mongoCoupons = {
       eligibleCategories = arr.length > 0 ? arr : null;
     }
 
+    let applicableProducts: string[] | null = null;
+    const rawProds = data.applicableProducts ?? data.products;
+    if (Array.isArray(rawProds)) {
+      const arr = rawProds.map((s: any) => String(s).trim()).filter(Boolean);
+      applicableProducts = arr.length > 0 ? arr : null;
+    } else if (typeof rawProds === "string" && rawProds.trim()) {
+      const arr = rawProds.split(",").map((s: string) => s.trim()).filter(Boolean);
+      applicableProducts = arr.length > 0 ? arr : null;
+    }
+
     const doc = {
       description: "",
       offerDisplayText: cleanOfferText || null,
@@ -1789,6 +2065,7 @@ export const mongoCoupons = {
       minimumOrderValue: data.minimumOrderValue ? Math.max(0, Number(data.minimumOrderValue)) : 0,
       maxDiscountAmount: data.maxDiscountAmount ? Math.max(0, Number(data.maxDiscountAmount)) : null,
       eligibleCategories,
+      applicableProducts,
       firstOrderOnly: Boolean(data.firstOrderOnly),
       perCustomerLimit: data.perCustomerLimit ? Math.max(1, parseInt(data.perCustomerLimit, 10)) : null,
       startDate: data.startDate ? new Date(data.startDate) : null,
@@ -1838,6 +2115,17 @@ export const mongoCoupons = {
         sanitizedUpdate.eligibleCategories = arr.length > 0 ? arr : null;
       } else {
         sanitizedUpdate.eligibleCategories = null;
+      }
+    }
+    if (sanitizedUpdate.applicableProducts !== undefined) {
+      if (Array.isArray(sanitizedUpdate.applicableProducts)) {
+        const arr = sanitizedUpdate.applicableProducts.map((s: any) => String(s).trim()).filter(Boolean);
+        sanitizedUpdate.applicableProducts = arr.length > 0 ? arr : null;
+      } else if (typeof sanitizedUpdate.applicableProducts === "string" && sanitizedUpdate.applicableProducts.trim()) {
+        const arr = sanitizedUpdate.applicableProducts.split(",").map((s: string) => s.trim()).filter(Boolean);
+        sanitizedUpdate.applicableProducts = arr.length > 0 ? arr : null;
+      } else {
+        sanitizedUpdate.applicableProducts = null;
       }
     }
     if (sanitizedUpdate.firstOrderOnly !== undefined) {
@@ -1911,6 +2199,178 @@ export const mongoCoupons = {
       }
     }
     return true;
+  },
+
+  async atomicDecrementUsage(id: string): Promise<boolean> {
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection("coupons");
+        const query: any = {
+          $and: [
+            { $or: [{ id }, { _id: id as any }] },
+            { usedCount: { $gt: 0 } },
+          ],
+        };
+        const res = await col.findOneAndUpdate(
+          query,
+          { $inc: { usedCount: -1 }, $set: { updatedAt: new Date() } },
+          { returnDocument: "after" }
+        );
+        const doc = (res as any)?.value ?? res;
+        if (doc) {
+          const formatted = formatCouponDoc(doc);
+          inMemoryCouponsMap.set(id, formatted);
+          return true;
+        }
+        return false;
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+
+    const existing = await this.findById(id);
+    if (!existing || (existing.usedCount || 0) <= 0) return false;
+    const newUsedCount = Math.max(0, (existing.usedCount || 0) - 1);
+    const updated = { ...existing, usedCount: newUsedCount, updatedAt: new Date() };
+    inMemoryCouponsMap.set(id, updated);
+    return true;
+  }
+};
+
+// ─── COUPON REDEMPTIONS ───────────────────────────────────────────────────
+const inMemoryRedemptionsMap = new Map<string, any>();
+
+function formatRedemptionDoc(r: any): any {
+  if (!r) return null;
+  const id = r.id || (r._id ? String(r._id) : crypto.randomUUID());
+  return {
+    ...r,
+    id,
+    _id: id,
+    discountAmount: Number(r.discountAmount || 0),
+    orderTotal: Number(r.orderTotal || 0),
+    status: r.status || "confirmed",
+    redeemedAt: r.redeemedAt ? new Date(r.redeemedAt) : new Date(),
+    createdAt: r.createdAt ? new Date(r.createdAt) : new Date(),
+  };
+}
+
+export const mongoCouponRedemptions = {
+  async findMany(filter: any = {}, options: { sort?: Sort; limit?: number; skip?: number } = {}): Promise<any[]> {
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection("coupon_redemptions");
+        let cursor = col.find(filter);
+        if (options.sort) cursor = cursor.sort(options.sort);
+        if (options.skip) cursor = cursor.skip(options.skip);
+        if (options.limit) cursor = cursor.limit(options.limit);
+        const list = await cursor.toArray();
+        if (list.length > 0) {
+          list.forEach(r => inMemoryRedemptionsMap.set(r.id || r._id, r));
+          return list.map(formatRedemptionDoc);
+        }
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+    let all = Array.from(inMemoryRedemptionsMap.values());
+    if (filter) {
+      if (filter.couponId) all = all.filter(r => r.couponId === filter.couponId);
+      if (filter.couponCode) all = all.filter(r => (r.couponCode || "").toUpperCase() === String(filter.couponCode).toUpperCase());
+      if (filter.userId) all = all.filter(r => r.userId === filter.userId);
+      if (filter.orderId) all = all.filter(r => r.orderId === filter.orderId);
+      if (filter.status) all = all.filter(r => r.status === filter.status);
+    }
+    all.sort((a, b) => new Date(b.redeemedAt || 0).getTime() - new Date(a.redeemedAt || 0).getTime());
+    if (options.skip) all = all.slice(options.skip);
+    if (options.limit) all = all.slice(0, options.limit);
+    return all.map(formatRedemptionDoc);
+  },
+
+  async findById(id: string): Promise<any | null> {
+    if (!id) return null;
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection("coupon_redemptions");
+        const found = await col.findOne({ $or: [{ id }, { _id: id as any }] });
+        if (found) {
+          const doc = formatRedemptionDoc(found);
+          inMemoryRedemptionsMap.set(id, doc);
+          return doc;
+        }
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+    const mem = inMemoryRedemptionsMap.get(id) || null;
+    return mem ? formatRedemptionDoc(mem) : null;
+  },
+
+  async insert(data: any): Promise<any> {
+    const id = data.id || crypto.randomUUID();
+    const now = new Date();
+    const doc = {
+      ...data,
+      id,
+      _id: id,
+      discountAmount: Number(data.discountAmount || 0),
+      orderTotal: Number(data.orderTotal || 0),
+      status: data.status || "confirmed",
+      redeemedAt: data.redeemedAt ? new Date(data.redeemedAt) : now,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const formatted = formatRedemptionDoc(doc);
+    inMemoryRedemptionsMap.set(id, formatted);
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection("coupon_redemptions");
+        await col.insertOne(formatted);
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+    return formatted;
+  },
+
+  async update(id: string, patch: any): Promise<any | null> {
+    const existing = await this.findById(id);
+    const updated = formatRedemptionDoc({ ...(existing || {}), ...patch, updatedAt: new Date(), id, _id: id });
+    inMemoryRedemptionsMap.set(id, updated);
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection("coupon_redemptions");
+        await col.updateOne({ $or: [{ id }, { _id: id as any }] }, { $set: { ...patch, updatedAt: new Date() } });
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+    return updated;
+  },
+
+  async delete(id: string): Promise<boolean> {
+    inMemoryRedemptionsMap.delete(id);
+    if (isMongoDbConnected()) {
+      try {
+        const res = await getCollection("coupon_redemptions").deleteOne({ $or: [{ id }, { _id: id as any }] });
+        return res.deletedCount > 0;
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+    return true;
+  },
+
+  async count(filter: any = {}): Promise<number> {
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection("coupon_redemptions");
+        return await col.countDocuments(filter);
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+    return (await this.findMany(filter)).length;
   }
 };
 
@@ -5049,4 +5509,248 @@ export const mongoLogs = {
     }
   },
 };
+
+// ─── ADMIN DEVICE AUTHORIZATION REPOSITORIES ─────────────────────────────────
+const inMemoryAdminDevices = new Map<string, AdminDevice>();
+const inMemoryAdminDeviceActivities: AdminDeviceActivity[] = [];
+
+export const mongoAdminDevices = {
+  async findById(deviceId: string): Promise<AdminDevice | null> {
+    if (!deviceId) return null;
+    const cleanId = deviceId.trim();
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection<AdminDevice>("admin_devices");
+        const orList: any[] = [{ deviceId: cleanId }, { id: cleanId }, { browserId: cleanId }];
+        if (ObjectId.isValid(cleanId)) {
+          orList.push({ _id: new ObjectId(cleanId) });
+        }
+        const doc = await col.findOne({ $or: orList });
+        if (doc) return { ...doc, id: doc.id || (doc as any)._id?.toString() || doc.deviceId };
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+    return inMemoryAdminDevices.get(cleanId) || null;
+  },
+
+  async findMany(filter: any = {}, options: { sort?: Sort; limit?: number; skip?: number } = {}): Promise<AdminDevice[]> {
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection<AdminDevice>("admin_devices");
+        let cursor = col.find(filter);
+        if (options.sort) cursor = cursor.sort(options.sort);
+        else cursor = cursor.sort({ createdAt: -1 });
+        if (options.skip) cursor = cursor.skip(options.skip);
+        if (options.limit) cursor = cursor.limit(options.limit);
+        const list = await cursor.toArray();
+        return list.map(d => ({ ...d, id: d.id || (d as any)._id?.toString() || d.deviceId }));
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+    let items = Array.from(inMemoryAdminDevices.values());
+    if (filter.status && filter.status !== "all") {
+      items = items.filter(d => d.status === filter.status);
+    }
+    if (filter.search) {
+      const q = String(filter.search).toLowerCase();
+      items = items.filter(d => d.deviceId.toLowerCase().includes(q) || (d.deviceName || "").toLowerCase().includes(q));
+    }
+    return items;
+  },
+
+  async count(filter: any = {}): Promise<number> {
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection<AdminDevice>("admin_devices");
+        return await col.countDocuments(filter);
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+    return inMemoryAdminDevices.size;
+  },
+
+  async create(device: Partial<AdminDevice> & { deviceId: string }): Promise<AdminDevice> {
+    const now = new Date();
+    const doc: AdminDevice = {
+      id: device.id || crypto.randomUUID(),
+      deviceId: device.deviceId.trim(),
+      deviceName: device.deviceName?.trim() || "Admin Device",
+      deviceDescription: device.deviceDescription?.trim() || "",
+      publicKey: device.publicKey || "",
+      status: device.status || "pending",
+      authorizedBy: device.authorizedBy || null,
+      authorizedDate: device.authorizedDate || (device.status === "authorized" ? now : null),
+      lastLoginDate: device.lastLoginDate || null,
+      lastLoginIp: device.lastLoginIp || null,
+      lastLoginBrowser: device.lastLoginBrowser || null,
+      createdAt: device.createdAt || now,
+      updatedAt: now,
+      revokedDate: device.revokedDate || null,
+      revokedBy: device.revokedBy || null,
+      revocationReason: device.revocationReason || null,
+      userAgent: device.userAgent || null,
+      platform: device.platform || null,
+    };
+
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection<AdminDevice>("admin_devices");
+        await col.updateOne(
+          { deviceId: doc.deviceId },
+          { $set: doc },
+          { upsert: true }
+        );
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+    inMemoryAdminDevices.set(doc.deviceId, doc);
+    return doc;
+  },
+
+  async update(deviceId: string, update: Partial<AdminDevice>): Promise<AdminDevice | null> {
+    if (!deviceId) return null;
+    const cleanId = deviceId.trim();
+    const now = new Date();
+    const setFields: any = { ...update, updatedAt: now };
+
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection<AdminDevice>("admin_devices");
+        await col.updateOne({ $or: [{ deviceId: cleanId }, { id: cleanId }] }, { $set: setFields });
+        const updated = await col.findOne({ $or: [{ deviceId: cleanId }, { id: cleanId }] });
+        if (updated) {
+          const res = { ...updated, id: updated.id || (updated as any)._id?.toString() || updated.deviceId };
+          inMemoryAdminDevices.set(cleanId, res);
+          return res;
+        }
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+    const existing = inMemoryAdminDevices.get(cleanId);
+    if (existing) {
+      const merged = { ...existing, ...setFields };
+      inMemoryAdminDevices.set(cleanId, merged);
+      return merged;
+    }
+    return null;
+  },
+
+  async delete(deviceId: string): Promise<boolean> {
+    if (!deviceId) return false;
+    const cleanId = deviceId.trim();
+    inMemoryAdminDevices.delete(cleanId);
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection<AdminDevice>("admin_devices");
+        const res = await col.deleteOne({ $or: [{ deviceId: cleanId }, { id: cleanId }] });
+        return res.deletedCount > 0;
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+    return true;
+  },
+
+  async getStats(): Promise<{
+    total: number;
+    authorized: number;
+    unauthorized: number;
+    blocked: number;
+    revoked: number;
+    pending: number;
+  }> {
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection<AdminDevice>("admin_devices");
+        const [total, authorized, unauthorized, blocked, revoked, pending] = await Promise.all([
+          col.countDocuments({}),
+          col.countDocuments({ status: "authorized" }),
+          col.countDocuments({ status: "unauthorized" }),
+          col.countDocuments({ status: "blocked" }),
+          col.countDocuments({ status: "revoked" }),
+          col.countDocuments({ status: "pending" }),
+        ]);
+        return { total, authorized, unauthorized, blocked, revoked, pending };
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+    const all = Array.from(inMemoryAdminDevices.values());
+    return {
+      total: all.length,
+      authorized: all.filter(d => d.status === "authorized").length,
+      unauthorized: all.filter(d => d.status === "unauthorized").length,
+      blocked: all.filter(d => d.status === "blocked").length,
+      revoked: all.filter(d => d.status === "revoked").length,
+      pending: all.filter(d => d.status === "pending").length,
+    };
+  },
+};
+
+export const mongoAdminDeviceActivities = {
+  async insert(activity: Partial<AdminDeviceActivity> & { deviceId: string; action: string }): Promise<AdminDeviceActivity> {
+    const doc: AdminDeviceActivity = {
+      id: activity.id || crypto.randomUUID(),
+      deviceId: activity.deviceId,
+      deviceName: activity.deviceName || "Unknown Device",
+      action: activity.action,
+      administrator: activity.administrator || "System",
+      result: activity.result || "success",
+      details: activity.details || {},
+      ipAddress: activity.ipAddress || "unknown",
+      userAgent: activity.userAgent || "",
+      timestamp: activity.timestamp || new Date(),
+    };
+
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection<AdminDeviceActivity>("admin_device_activities");
+        await col.insertOne(doc as any);
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+    inMemoryAdminDeviceActivities.unshift(doc);
+    if (inMemoryAdminDeviceActivities.length > 500) {
+      inMemoryAdminDeviceActivities.pop();
+    }
+    return doc;
+  },
+
+  async findMany(filter: any = {}, options: { sort?: Sort; limit?: number; skip?: number } = {}): Promise<AdminDeviceActivity[]> {
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection<AdminDeviceActivity>("admin_device_activities");
+        let cursor = col.find(filter);
+        if (options.sort) cursor = cursor.sort(options.sort);
+        else cursor = cursor.sort({ timestamp: -1 });
+        if (options.skip) cursor = cursor.skip(options.skip);
+        if (options.limit) cursor = cursor.limit(options.limit);
+        const list = await cursor.toArray();
+        return list.map(a => ({ ...a, id: a.id || (a as any)._id?.toString() }));
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+    return inMemoryAdminDeviceActivities.slice(0, options.limit || 50);
+  },
+
+  async count(filter: any = {}): Promise<number> {
+    if (isMongoDbConnected()) {
+      try {
+        const col = getCollection<AdminDeviceActivity>("admin_device_activities");
+        return await col.countDocuments(filter);
+      } catch {
+        setMongoConnected(false);
+      }
+    }
+    return inMemoryAdminDeviceActivities.length;
+  },
+};
+
 

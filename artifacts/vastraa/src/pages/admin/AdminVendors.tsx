@@ -277,7 +277,7 @@ function VendorsContent() {
                   const dateStr = regDate ? new Date(regDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—";
 
                   return (
-                    <tr key={v.id} className="hover:bg-gray-50/60 transition-colors">
+                    <tr key={`${v.id || (v as any)._id || "vendor"}-${idx}`} className="hover:bg-gray-50/60 transition-colors">
                       <td className="px-5 py-3.5 text-xs text-gray-400">
                         {(page - 1) * PAGE_SIZE + idx + 1}
                       </td>

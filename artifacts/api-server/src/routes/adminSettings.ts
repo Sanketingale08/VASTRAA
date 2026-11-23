@@ -1,13 +1,15 @@
 import { Router } from "express";
-import { db, siteSettingsTable, adminLoginSessionsTable, adminAuditLogsTable, mongoSiteSettings, mongoGeneric, mongoAuditLogs, isMongoDbConnected } from "@workspace/db";
+import { db, siteSettingsTable, adminLoginSessionsTable, adminAuditLogsTable, mongoSiteSettings, mongoGeneric, mongoAuditLogs, mongoUsers, isMongoDbConnected } from "@workspace/db";
 import { eq, ne, and, isNull, desc, gte, lte, sql } from "drizzle-orm";
 import { requireAdminKey, clearAdminKeyCache, sha256hex } from "../middlewares/isAdmin";
 import bcrypt from "bcryptjs";
 import { writeAuditLog, getIp } from "../lib/auditLog";
-import { clearAdminNotifPrefCache } from "../lib/adminNotifications";
+import { clearAdminNotifPrefCache, insertAdminNotification } from "../lib/adminNotifications";
 import { clearMaintenanceModeCache } from "../middlewares/maintenanceMode";
 import { getCashfreeConfig, testCashfreeConnection } from "../lib/cashfree";
 import crypto from "crypto";
+import { sendAdminProfileOtpEmail } from "../lib/transactionalEmail";
+import { sendSms } from "../lib/sms";
 
 const router = Router();
 
@@ -90,7 +92,48 @@ async function deleteSetting(key: string) {
   } catch {}
 }
 
-// ── Admin Profile ─────────────────────────────────────────────────────────────
+// ── Admin Profile & OTP Verification ─────────────────────────────────────────
+
+interface AdminProfileChallenge {
+  id: string; // pending update ID
+  pendingUpdateId: string;
+  adminId: string;
+  name: string;
+  destinationEmail: string;
+  destinationMobile: string;
+  newEmail: string;
+  newMobile: string;
+  requiresEmailOtp: boolean;
+  requiresMobileOtp: boolean;
+  emailOtpHash: string | null;
+  mobileOtpHash: string | null;
+  expiresAt: number;
+  resendAvailableAt: number;
+  attempts: number;
+  maxAttempts: number;
+}
+
+const profileChallenges = new Map<string, AdminProfileChallenge>();
+
+function cleanupChallenges() {
+  const now = Date.now();
+  for (const [id, c] of profileChallenges.entries()) {
+    if (c.expiresAt < now) profileChallenges.delete(id);
+  }
+}
+
+function maskEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!domain) return email;
+  if (local.length <= 2) return `${local[0]}*@${domain}`;
+  return `${local[0]}***${local[local.length - 1]}@${domain}`;
+}
+
+function maskMobile(mobile: string): string {
+  const digits = mobile.replace(/\D/g, "");
+  if (digits.length <= 4) return "••••";
+  return `+${digits.slice(0, 2)} •••••• ${digits.slice(-4)}`;
+}
 
 router.get("/admin/settings/profile", requireAdminKey, async (req: any, res: any) => {
   try {
@@ -109,15 +152,368 @@ router.get("/admin/settings/profile", requireAdminKey, async (req: any, res: any
   }
 });
 
+router.post("/admin/settings/profile/request-verification", requireAdminKey, async (req: any, res: any) => {
+  try {
+    const { name, email, mobile } = req.body ?? {};
+
+    const [currentName, currentEmail, currentMobile] = await Promise.all([
+      getSetting("admin_name").then(v => v ?? "Super Admin"),
+      getSetting("admin_email").then(v => v ?? "admin@vastraa.com"),
+      getSetting("admin_mobile").then(v => v ?? "+91 98765 43210"),
+    ]);
+
+    const targetName = typeof name === "string" && name.trim() ? name.trim() : currentName;
+    const targetEmail = typeof email === "string" && email.trim() ? email.trim() : currentEmail;
+    const targetMobile = typeof mobile === "string" && mobile.trim() ? mobile.trim() : currentMobile;
+
+    const normCurEmail = currentEmail.trim().toLowerCase();
+    const normNewEmail = targetEmail.trim().toLowerCase();
+    const normCurMobile = currentMobile.replace(/\D/g, "");
+    const normNewMobile = targetMobile.replace(/\D/g, "");
+
+    const isEmailChanged = normNewEmail !== "" && normNewEmail !== normCurEmail;
+    const isMobileChanged = normNewMobile !== "" && normNewMobile !== normCurMobile;
+    const isNameChanged = targetName !== "" && targetName !== currentName.trim();
+
+    // If neither email nor mobile changed, update name directly if needed
+    if (!isEmailChanged && !isMobileChanged) {
+      if (isNameChanged) {
+        await upsertSetting("admin_name", targetName);
+        await writeAuditLog({
+          action: "admin_profile_updated",
+          targetType: "settings",
+          targetId: "admin_profile",
+          details: { name: targetName },
+          req,
+        });
+      }
+      return res.json({
+        requiresVerification: false,
+        success: true,
+        message: "Profile updated successfully!",
+      });
+    }
+
+    // Format validation (Requirement 5: 400 Bad Request)
+    if (isEmailChanged && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail)) {
+      return res.status(400).json({ success: false, error: "Please enter a valid email address.", code: "INVALID_EMAIL" });
+    }
+    if (isMobileChanged && normNewMobile.length < 10) {
+      return res.status(400).json({ success: false, error: "Please enter a valid 10-digit mobile number.", code: "INVALID_MOBILE" });
+    }
+
+    const adminId = (req as any).admin?.id || (req as any).userId || (req as any).adminId || "admin";
+
+    // Account conflict validation (Requirement 5: 409 Conflict)
+    if (isEmailChanged) {
+      try {
+        if (mongoUsers && typeof mongoUsers.findByEmail === "function") {
+          const existingUser = await mongoUsers.findByEmail(normNewEmail);
+          if (existingUser && existingUser.id !== adminId && (existingUser as any)._id?.toString() !== adminId) {
+            return res.status(409).json({
+              success: false,
+              error: "This email address is already registered to another account.",
+              code: "EMAIL_ALREADY_REGISTERED",
+            });
+          }
+        }
+      } catch {}
+    }
+
+    if (isMobileChanged) {
+      try {
+        if (mongoGeneric && typeof mongoGeneric.getCollection === "function") {
+          const col = mongoGeneric.getCollection("users");
+          const existingUser = await col.findOne({
+            $or: [
+              { phone: normNewMobile },
+              { mobile: normNewMobile },
+              { phone: targetMobile },
+              { mobile: targetMobile },
+            ],
+          });
+          if (existingUser && existingUser.id !== adminId && (existingUser as any)._id?.toString() !== adminId) {
+            return res.status(409).json({
+              success: false,
+              error: "This mobile number is already registered to another account.",
+              code: "MOBILE_ALREADY_REGISTERED",
+            });
+          }
+        }
+      } catch {}
+    }
+
+    // Generate secure, random 6-digit OTPs
+    const emailOtp = isEmailChanged ? crypto.randomInt(100000, 999999).toString() : null;
+    const mobileOtp = isMobileChanged ? crypto.randomInt(100000, 999999).toString() : null;
+
+    const challengeId = crypto.randomUUID();
+    const now = Date.now();
+
+    // 1. Deliver OTP to newly entered email via SMTP first
+    if (isEmailChanged && emailOtp) {
+      const emailResult = await sendAdminProfileOtpEmail({
+        toEmail: targetEmail, // newly entered destination email
+        otp: emailOtp,
+        name: targetName,
+      });
+
+      if (!emailResult.delivered) {
+        return res.status(502).json({
+          success: false,
+          error: emailResult.error || "The SMTP server failed to accept the verification email. Please check your email configuration.",
+        });
+      }
+    }
+
+    // 2. Deliver OTP to newly entered mobile via SMS if changed
+    if (isMobileChanged && mobileOtp) {
+      await sendSms(
+        targetMobile,
+        `Your VASTRAA Admin Profile verification code is ${mobileOtp}. Valid for 5 minutes. Do not share this code.`
+      ).catch(() => {});
+    }
+
+    // 3. Store challenge only after SMTP email delivery request is verified and accepted
+    cleanupChallenges();
+    profileChallenges.set(challengeId, {
+      id: challengeId,
+      pendingUpdateId: challengeId,
+      adminId,
+      name: targetName,
+      destinationEmail: targetEmail,
+      destinationMobile: targetMobile,
+      newEmail: isEmailChanged ? targetEmail : currentEmail,
+      newMobile: isMobileChanged ? targetMobile : currentMobile,
+      requiresEmailOtp: isEmailChanged,
+      requiresMobileOtp: isMobileChanged,
+      emailOtpHash: emailOtp ? sha256hex(emailOtp) : null,
+      mobileOtpHash: mobileOtp ? sha256hex(mobileOtp) : null,
+      expiresAt: now + 5 * 60 * 1000, // 5 minutes
+      resendAvailableAt: now + 60 * 1000, // 60s cooldown
+      attempts: 0,
+      maxAttempts: 5,
+    });
+
+    return res.json({
+      requiresVerification: true,
+      challengeId,
+      requiresEmailOtp: isEmailChanged,
+      requiresMobileOtp: isMobileChanged,
+      emailTarget: isEmailChanged ? maskEmail(targetEmail) : undefined,
+      mobileTarget: isMobileChanged ? maskMobile(targetMobile) : undefined,
+      resendCooldownSeconds: 60,
+      expiresInSeconds: 300,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || "Failed to initiate verification" });
+  }
+});
+
+router.post("/admin/settings/profile/verify-otp", requireAdminKey, async (req: any, res: any) => {
+  try {
+    const { challengeId, emailOtp, mobileOtp } = req.body ?? {};
+    if (!challengeId) {
+      return res.status(400).json({ success: false, error: "Missing verification challenge ID." });
+    }
+
+    const challenge = profileChallenges.get(challengeId);
+    if (!challenge || challenge.expiresAt < Date.now()) {
+      if (challenge) profileChallenges.delete(challengeId);
+      return res.status(400).json({
+        success: false,
+        error: "Verification code has expired or session is invalid. Please request a new OTP.",
+      });
+    }
+
+    // Ownership check (Requirement 1: Account ownership validation)
+    const currentAdminId = (req as any).admin?.id || (req as any).userId || (req as any).adminId || "admin";
+    if (challenge.adminId && challenge.adminId !== currentAdminId && currentAdminId !== "admin") {
+      req.log?.warn?.(
+        { middleware: "adminSettings", reason: "Ownership mismatch for profile verification challenge" },
+        "Admin profile verification denied"
+      );
+      return res.status(403).json({
+        success: false,
+        error: "Forbidden: You do not have permission to verify this challenge.",
+        code: "FORBIDDEN",
+      });
+    }
+
+    if (challenge.attempts >= challenge.maxAttempts) {
+      profileChallenges.delete(challengeId);
+      return res.status(400).json({
+        success: false,
+        error: "Maximum verification attempts exceeded. Please request a new OTP.",
+      });
+    }
+
+    // Verify Email OTP if required
+    if (challenge.requiresEmailOtp) {
+      const cleanEmailOtp = String(emailOtp || "").trim();
+      if (!cleanEmailOtp || sha256hex(cleanEmailOtp) !== challenge.emailOtpHash) {
+        challenge.attempts++;
+        const remaining = challenge.maxAttempts - challenge.attempts;
+        return res.status(400).json({
+          success: false,
+          error: `Incorrect Email OTP. ${remaining > 0 ? `${remaining} attempt${remaining > 1 ? "s" : ""} remaining.` : "Please request a new OTP."}`,
+          remainingAttempts: remaining,
+        });
+      }
+    }
+
+    // Verify Mobile OTP if required
+    if (challenge.requiresMobileOtp) {
+      const cleanMobileOtp = String(mobileOtp || "").trim();
+      if (!cleanMobileOtp || sha256hex(cleanMobileOtp) !== challenge.mobileOtpHash) {
+        challenge.attempts++;
+        const remaining = challenge.maxAttempts - challenge.attempts;
+        return res.status(400).json({
+          success: false,
+          error: `Incorrect Mobile OTP. ${remaining > 0 ? `${remaining} attempt${remaining > 1 ? "s" : ""} remaining.` : "Please request a new OTP."}`,
+          remainingAttempts: remaining,
+        });
+      }
+    }
+
+    // Both passed verification: Commit changes to database
+    await Promise.all([
+      upsertSetting("admin_name", challenge.name),
+      upsertSetting("admin_email", challenge.newEmail),
+      upsertSetting("admin_mobile", challenge.newMobile),
+    ]);
+
+    profileChallenges.delete(challengeId);
+
+    await writeAuditLog({
+      action: "admin_profile_updated",
+      targetType: "settings",
+      targetId: "admin_profile",
+      details: {
+        name: challenge.name,
+        email: challenge.newEmail,
+        mobile: challenge.newMobile,
+      },
+      req,
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      message: "Profile updated successfully!",
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || "Failed to verify OTP" });
+  }
+});
+
+router.post("/admin/settings/profile/resend-otp", requireAdminKey, async (req: any, res: any) => {
+  try {
+    const { challengeId, type } = req.body ?? {};
+    if (!challengeId) {
+      return res.status(400).json({ success: false, error: "Missing verification challenge ID." });
+    }
+
+    const challenge = profileChallenges.get(challengeId);
+    if (!challenge || challenge.expiresAt < Date.now()) {
+      if (challenge) profileChallenges.delete(challengeId);
+      return res.status(400).json({
+        success: false,
+        error: "Verification session has expired. Please request a new OTP.",
+      });
+    }
+
+    // Ownership check (Requirement 1: Account ownership validation)
+    const currentAdminId = (req as any).admin?.id || (req as any).userId || (req as any).adminId || "admin";
+    if (challenge.adminId && challenge.adminId !== currentAdminId && currentAdminId !== "admin") {
+      req.log?.warn?.(
+        { middleware: "adminSettings", reason: "Ownership mismatch for profile resend OTP" },
+        "Admin profile resend OTP denied"
+      );
+      return res.status(403).json({
+        success: false,
+        error: "Forbidden: You do not have permission to resend OTP for this challenge.",
+        code: "FORBIDDEN",
+      });
+    }
+
+    const now = Date.now();
+    if (now < challenge.resendAvailableAt) {
+      const wait = Math.ceil((challenge.resendAvailableAt - now) / 1000);
+      return res.status(429).json({
+        success: false,
+        error: `Please wait ${wait}s before requesting another OTP.`,
+        waitSeconds: wait,
+      });
+    }
+
+    const resendEmail = challenge.requiresEmailOtp && (type === "email" || type === "all" || !type);
+    const resendMobile = challenge.requiresMobileOtp && (type === "mobile" || type === "all" || !type);
+
+    if (resendEmail) {
+      const newEmailOtp = crypto.randomInt(100000, 999999).toString();
+      const sendResult = await sendAdminProfileOtpEmail({
+        toEmail: challenge.destinationEmail || challenge.newEmail,
+        otp: newEmailOtp,
+        name: challenge.name,
+      });
+
+      if (!sendResult.delivered) {
+        return res.status(502).json({
+          success: false,
+          error: sendResult.error || "The SMTP server failed to accept the resend verification email.",
+        });
+      }
+      challenge.emailOtpHash = sha256hex(newEmailOtp);
+    }
+
+    if (resendMobile) {
+      const newMobileOtp = crypto.randomInt(100000, 999999).toString();
+      challenge.mobileOtpHash = sha256hex(newMobileOtp);
+      await sendSms(
+        challenge.newMobile,
+        `Your VASTRAA Admin Profile verification code is ${newMobileOtp}. Valid for 5 minutes. Do not share this code.`
+      ).catch(() => {});
+    }
+
+    challenge.resendAvailableAt = now + 60 * 1000;
+    challenge.expiresAt = now + 5 * 60 * 1000;
+
+    return res.json({
+      success: true,
+      message: "Verification code resent successfully.",
+      resendCooldownSeconds: 60,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || "Failed to resend OTP" });
+  }
+});
+
 router.patch("/admin/settings/profile", requireAdminKey, async (req: any, res: any) => {
   try {
     const { name, email, mobile } = req.body ?? {};
-    const updates: Promise<void>[] = [];
-    if (name !== undefined) updates.push(upsertSetting("admin_name", String(name).trim()));
-    if (email !== undefined) updates.push(upsertSetting("admin_email", String(email).trim()));
-    if (mobile !== undefined) updates.push(upsertSetting("admin_mobile", String(mobile).trim()));
-    await Promise.all(updates);
-    res.json({ ok: true });
+
+    const [currentEmail, currentMobile] = await Promise.all([
+      getSetting("admin_email").then(v => v ?? "admin@vastraa.com"),
+      getSetting("admin_mobile").then(v => v ?? "+91 98765 43210"),
+    ]);
+
+    const normCurEmail = currentEmail.trim().toLowerCase();
+    const normNewEmail = typeof email === "string" ? email.trim().toLowerCase() : normCurEmail;
+    const normCurMobile = currentMobile.replace(/\D/g, "");
+    const normNewMobile = typeof mobile === "string" ? mobile.replace(/\D/g, "") : normCurMobile;
+
+    if (normNewEmail !== normCurEmail || normNewMobile !== normCurMobile) {
+      return res.status(400).json({
+        error: "Updating email or mobile number requires OTP verification. Please use the verification workflow.",
+      });
+    }
+
+    if (name !== undefined) {
+      await upsertSetting("admin_name", String(name).trim());
+    }
+
+    res.json({ ok: true, success: true, message: "Profile updated successfully!" });
   } catch (err) {
     res.status(500).json({ error: "Failed to update profile" });
   }
@@ -175,6 +571,12 @@ const handleChangeAccessKey = async (req: any, res: any) => {
     clearAdminKeyCache();
 
     writeAuditLog({ action: "access_key_changed", module: "Settings", ipAddress: getIp(req) }).catch(() => {});
+    await insertAdminNotification({
+      type: "security_login_alert",
+      title: "Admin Access Key Changed",
+      body: `Administrative access key was successfully updated from IP ${getIp(req)}.`,
+      metadata: { action: "access_key_changed", ipAddress: getIp(req) },
+    }).catch(() => {});
     return res.json({ ok: true, success: true, message: "Access Key updated successfully." });
   } catch (err) {
     return res.status(500).json({ success: false, error: "Failed to change access key" });
@@ -230,6 +632,12 @@ router.post("/admin/settings/sessions", requireAdminKey, async (req: any, res: a
     } catch {}
 
     writeAuditLog({ action: "admin_login", module: "Security", details: { device, os, browser }, ipAddress: ip }).catch(() => {});
+    await insertAdminNotification({
+      type: "security_login_alert",
+      title: "Admin Login Detected",
+      body: `Admin session started from ${device || "device"} (${os}, ${browser}) - IP: ${ip}`,
+      metadata: { device, os, browser, ipAddress: ip, sessionId },
+    }).catch(() => {});
     res.json({ sessionId, tokenHash });
   } catch (err) {
     res.status(500).json({ error: "Failed to record session" });

@@ -11,6 +11,7 @@ export const couponsTable = pgTable("coupons", {
   minimumOrderValue: integer("minimum_order_value").notNull().default(0),
   maxDiscountAmount: integer("max_discount_amount"),
   eligibleCategories: text("eligible_categories"),
+  applicableProducts: text("applicable_products"),
   firstOrderOnly: boolean("first_order_only").notNull().default(false),
   perCustomerLimit: integer("per_customer_limit"),
   startDate: timestamp("start_date"),

@@ -16,6 +16,16 @@ const CARD   = "#FFFFFF";   // card fill
 const INPUT  = "#F4F5F7";   // input field fill
 const BORDER = "rgba(199, 204, 209, 0.4)";   // subtle platinum border
 
+function isValidEmailOrMobile(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (trimmed.includes("@")) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+  }
+  const digits = trimmed.replace(/\D/g, "");
+  return digits.length >= 10 && digits.length <= 15;
+}
+
 export default function SellerLogin() {
   const { isSignedIn, isLoaded: isUserLoaded, user } = useUser();
   const [, setLocation] = useLocation();
@@ -69,8 +79,18 @@ export default function SellerLogin() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!email.trim() || !password) {
-      setErrorMessage("Invalid email or password.");
+    if (!email.trim()) {
+      setErrorMessage("Please enter your email address or mobile number.");
+      return;
+    }
+
+    if (!isValidEmailOrMobile(email)) {
+      setErrorMessage("Please enter a valid email address or 10-digit mobile number.");
+      return;
+    }
+
+    if (!password) {
+      setErrorMessage("Please enter your password.");
       return;
     }
 
@@ -78,17 +98,24 @@ export default function SellerLogin() {
     setErrorMessage("");
 
     try {
+      const inputVal = email.trim();
       const res = await fetch("/api/seller/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), password }),
+        body: JSON.stringify({
+          identifier: inputVal,
+          sellerId: inputVal,
+          email: inputVal,
+          mobile: inputVal,
+          password,
+        }),
       });
 
       const data = await res.json().catch(() => ({}));
 
       if (res.ok && data.success) {
         localStorage.setItem("vastraa_seller_authenticated", "true");
-        localStorage.setItem("vastraa_seller_email", email.trim());
+        localStorage.setItem("vastraa_seller_email", data.user?.email || inputVal);
         if (data.token) {
           localStorage.setItem("vastraa_auth_token", data.token);
           localStorage.setItem("vastraa_seller_token", data.token);
@@ -97,7 +124,7 @@ export default function SellerLogin() {
         setLoading(false);
         return;
       } else {
-        setErrorMessage(data?.error || data?.message || "Invalid email or password.");
+        setErrorMessage(data?.message || data?.error || "Invalid email or password.");
         setLoading(false);
         return;
       }
@@ -180,31 +207,31 @@ export default function SellerLogin() {
                 </div>
               )}
 
-              {/* Email Input */}
+              {/* Email Address or Mobile Number Input */}
               <div>
                 <label
-                  htmlFor="seller-email"
+                  htmlFor="seller-identifier"
                   className="block text-xs font-bold uppercase tracking-wider mb-1.5"
                   style={{ color: NAVY }}
                 >
-                  Seller Email
+                  Email Address or Mobile Number
                 </label>
                 <div className="relative">
                   <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400">
-                    <Mail size={16} />
+                    <Store size={16} />
                   </div>
                   <input
-                    id="seller-email"
-                    type="email"
-                    name="email"
-                    autoComplete="email"
+                    id="seller-identifier"
+                    type="text"
+                    name="identifier"
+                    autoComplete="username"
                     required
                     value={email}
                     onChange={(e) => {
                       setEmail(e.target.value);
                       if (errorMessage) setErrorMessage("");
                     }}
-                    placeholder="seller@example.com"
+                    placeholder="Enter your email address or mobile number"
                     className="w-full pl-10 pr-4 py-3 rounded-xl border text-sm outline-none transition-all focus:border-[#0A1F44] focus:ring-1 focus:ring-[#0A1F44]"
                     style={{
                       background: INPUT,

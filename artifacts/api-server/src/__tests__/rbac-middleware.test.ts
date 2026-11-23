@@ -68,6 +68,7 @@ vi.mock("@workspace/db", () => ({
     findById: vi.fn().mockResolvedValue(null),
     findByEmail: vi.fn().mockResolvedValue(null),
   },
+  getCanonicalSellerId: vi.fn((v: any) => v?.vendorId || v?.id || v?.sellerId || null),
   // Required by isAdmin middleware (key-hash and 2FA-enabled lookups)
   siteSettingsTable: { key: "key", value: "value", updatedAt: "updatedAt" },
   adminLoginSessionsTable: {
@@ -126,25 +127,25 @@ describe("isAuthenticated", () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("sets req.userId and calls next() for an authenticated user", () => {
+  it("sets req.userId and calls next() for an authenticated user", async () => {
     mockGetAuth.mockReturnValue({ userId: "user-abc" });
     const req = mockReq();
     const res = mockRes();
 
-    isAuthenticated(req, res, next);
+    await isAuthenticated(req, res, next);
 
     expect((req as any).userId).toBe("user-abc");
     expect(next).toHaveBeenCalled();
     expect(res.status).not.toHaveBeenCalled();
   });
 
-  it("prefers sessionClaims.userId over top-level userId", () => {
+  it("prefers sessionClaims.userId over top-level userId", async () => {
     mockGetAuth.mockReturnValue({
       userId: "outer-id",
       sessionClaims: { userId: "claims-id" },
     });
     const req = mockReq();
-    isAuthenticated(req, mockRes(), next);
+    await isAuthenticated(req, mockRes(), next);
 
     expect((req as any).userId).toBe("claims-id");
     expect(next).toHaveBeenCalled();

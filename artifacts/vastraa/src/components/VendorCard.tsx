@@ -38,8 +38,9 @@ export function VendorCard({ vendor }: VendorCardProps) {
               )}
             </div>
             {typeof vendor.rating === "number" && vendor.rating > 0 && (
-              <div className="absolute -bottom-1 -right-1 bg-[#C7CCD1] text-[#0A1F44] text-[9px] font-bold px-1.5 py-0.5 rounded-full leading-tight shadow-sm">
-                ★{vendor.rating.toFixed(1)}
+              <div className="absolute -bottom-1 -right-1 bg-[#C7CCD1] text-[#0A1F44] text-[9px] font-bold px-1.5 py-0.5 rounded-full leading-tight shadow-sm flex items-center gap-0.5">
+                <Star size={9} className="fill-[#0A1F44] text-[#0A1F44] shrink-0" />
+                <span>{vendor.rating.toFixed(1)}</span>
               </div>
             )}
           </div>

@@ -3,7 +3,7 @@ import { getAuth } from "@clerk/express";
 import { requireAuth } from "../middlewares/isAuthenticated";
 import { requireAdminKey } from "../middlewares/isAdmin";
 import { writeAuditLog, getIp } from "../lib/auditLog";
-import { db, mongoCoupons, mongoNotifications, mongoNotificationPreferences } from "@workspace/db";
+import { db, mongoCoupons, mongoCouponRedemptions, mongoOrders, mongoNotifications, mongoNotificationPreferences } from "@workspace/db";
 import {
   couponsTable,
   couponRedemptionsTable,
@@ -120,8 +120,30 @@ router.get("/admin/coupons", requireAdminKey, async (req: any, res: any): Promis
         .catch(() => []);
     }
 
+    const now = new Date();
+    const stats = {
+      all: rows.length,
+      active: rows.filter((c) => c.active && (!c.expiresAt || new Date(c.expiresAt) > now) && (!c.startDate || new Date(c.startDate) <= now)).length,
+      scheduled: rows.filter((c) => c.active && c.startDate && new Date(c.startDate) > now).length,
+      expired: rows.filter((c) => c.expiresAt && new Date(c.expiresAt) <= now).length,
+      inactive: rows.filter((c) => !c.active).length,
+    };
+
+    const statusQuery = String(req.query.status || "all").toLowerCase().trim();
+    let filtered = rows;
+    if (statusQuery === "active") {
+      filtered = rows.filter((c) => c.active && (!c.expiresAt || new Date(c.expiresAt) > now) && (!c.startDate || new Date(c.startDate) <= now));
+    } else if (statusQuery === "scheduled") {
+      filtered = rows.filter((c) => c.active && c.startDate && new Date(c.startDate) > now);
+    } else if (statusQuery === "expired") {
+      filtered = rows.filter((c) => c.expiresAt && new Date(c.expiresAt) <= now);
+    } else if (statusQuery === "inactive") {
+      filtered = rows.filter((c) => !c.active);
+    }
+
     res.json({
-      coupons: rows.map((c) => ({
+      stats,
+      coupons: filtered.map((c) => ({
         id: c.id,
         code: c.code,
         type: c.type,
@@ -131,6 +153,7 @@ router.get("/admin/coupons", requireAdminKey, async (req: any, res: any): Promis
         minimumOrderValue: c.minimumOrderValue ? Number(c.minimumOrderValue) : 0,
         maxDiscountAmount: c.maxDiscountAmount != null ? Number(c.maxDiscountAmount) : null,
         eligibleCategories: c.eligibleCategories ?? null,
+        applicableProducts: c.applicableProducts ?? null,
         firstOrderOnly: Boolean(c.firstOrderOnly),
         perCustomerLimit: c.perCustomerLimit != null ? Number(c.perCustomerLimit) : null,
         startDate: c.startDate ?? null,
@@ -143,7 +166,7 @@ router.get("/admin/coupons", requireAdminKey, async (req: any, res: any): Promis
     });
   } catch (err) {
     req.log?.error?.({ err }, "Failed to list coupons");
-    res.json({ coupons: [] });
+    res.json({ coupons: [], stats: { all: 0, active: 0, scheduled: 0, expired: 0, inactive: 0 } });
   }
 });
 
@@ -232,6 +255,17 @@ router.post("/admin/coupons", requireAdminKey, async (req: any, res: any): Promi
     }
   }
 
+  let normalizedProducts: string[] | null = null;
+  if (req.body.applicableProducts !== undefined && req.body.applicableProducts !== null) {
+    if (Array.isArray(req.body.applicableProducts)) {
+      normalizedProducts = req.body.applicableProducts.map((p: any) => String(p).trim()).filter(Boolean);
+      if (normalizedProducts.length === 0) normalizedProducts = null;
+    } else if (typeof req.body.applicableProducts === "string" && req.body.applicableProducts.trim()) {
+      normalizedProducts = req.body.applicableProducts.split(",").map((p: string) => p.trim()).filter(Boolean);
+      if (normalizedProducts.length === 0) normalizedProducts = null;
+    }
+  }
+
   const cleanMov = minimumOrderValue != null ? Math.max(0, Number(minimumOrderValue)) : 0;
   const cleanMaxDiscount = maxDiscountAmount != null ? Math.max(0, Number(maxDiscountAmount)) : null;
   const cleanPerCustomer = perCustomerLimit != null ? Math.max(1, parseInt(perCustomerLimit, 10)) : null;
@@ -250,6 +284,7 @@ router.post("/admin/coupons", requireAdminKey, async (req: any, res: any): Promi
         minimumOrderValue: cleanMov,
         maxDiscountAmount: cleanMaxDiscount,
         eligibleCategories: normalizedCategories,
+        applicableProducts: normalizedProducts,
         firstOrderOnly: cleanFirstOrder,
         perCustomerLimit: cleanPerCustomer,
         startDate: cleanStartDate,
@@ -270,6 +305,7 @@ router.post("/admin/coupons", requireAdminKey, async (req: any, res: any): Promi
           minimumOrderValue: cleanMov,
           maxDiscountAmount: cleanMaxDiscount,
           eligibleCategories: normalizedCategories ? normalizedCategories.join(",") : null,
+          applicableProducts: normalizedProducts ? normalizedProducts.join(",") : null,
           firstOrderOnly: cleanFirstOrder,
           perCustomerLimit: cleanPerCustomer,
           startDate: cleanStartDate,
@@ -331,6 +367,7 @@ router.post("/admin/coupons", requireAdminKey, async (req: any, res: any): Promi
         minimumOrderValue: created.minimumOrderValue ? Number(created.minimumOrderValue) : 0,
         maxDiscountAmount: created.maxDiscountAmount != null ? Number(created.maxDiscountAmount) : null,
         eligibleCategories: created.eligibleCategories ?? null,
+        applicableProducts: created.applicableProducts ?? null,
         firstOrderOnly: Boolean(created.firstOrderOnly),
         perCustomerLimit: created.perCustomerLimit != null ? Number(created.perCustomerLimit) : null,
         startDate: created.startDate ?? null,
@@ -448,6 +485,18 @@ router.put("/admin/coupons/:id", requireAdminKey, async (req: any, res: any): Pr
     }
   }
 
+  if (req.body.applicableProducts !== undefined) {
+    if (Array.isArray(req.body.applicableProducts)) {
+      const clean = req.body.applicableProducts.map((p: any) => String(p).trim()).filter(Boolean);
+      patch.applicableProducts = clean.length > 0 ? clean : null;
+    } else if (typeof req.body.applicableProducts === "string" && req.body.applicableProducts.trim()) {
+      const clean = req.body.applicableProducts.split(",").map((p: string) => p.trim()).filter(Boolean);
+      patch.applicableProducts = clean.length > 0 ? clean : null;
+    } else {
+      patch.applicableProducts = null;
+    }
+  }
+
   if (offerDisplayText !== undefined) {
     if (offerDisplayText !== null && typeof offerDisplayText !== "string") {
       res.status(400).json({ error: "offerDisplayText must be a string" });
@@ -482,6 +531,9 @@ router.put("/admin/coupons/:id", requireAdminKey, async (req: any, res: any): Pr
       if (sqlPatch.eligibleCategories && Array.isArray(sqlPatch.eligibleCategories)) {
         sqlPatch.eligibleCategories = sqlPatch.eligibleCategories.join(",");
       }
+      if (sqlPatch.applicableProducts && Array.isArray(sqlPatch.applicableProducts)) {
+        sqlPatch.applicableProducts = sqlPatch.applicableProducts.join(",");
+      }
       const [u] = await db
         .update(couponsTable)
         .set(sqlPatch)
@@ -502,6 +554,7 @@ router.put("/admin/coupons/:id", requireAdminKey, async (req: any, res: any): Pr
         minimumOrderValue: updated.minimumOrderValue ? Number(updated.minimumOrderValue) : 0,
         maxDiscountAmount: updated.maxDiscountAmount != null ? Number(updated.maxDiscountAmount) : null,
         eligibleCategories: updated.eligibleCategories ?? null,
+        applicableProducts: updated.applicableProducts ?? null,
         firstOrderOnly: Boolean(updated.firstOrderOnly),
         perCustomerLimit: updated.perCustomerLimit != null ? Number(updated.perCustomerLimit) : null,
         startDate: updated.startDate ?? null,
@@ -568,6 +621,195 @@ router.delete("/admin/coupons/:id", requireAdminKey, async (req: any, res: any):
   }
 });
 
+// GET /admin/coupons/:id/analytics — get usage analytics and customer redemptions for a coupon
+router.get("/admin/coupons/:id/analytics", requireAdminKey, async (req: any, res: any): Promise<void> => {
+  const { id } = req.params;
+  try {
+    let coupon: any = null;
+    try {
+      coupon = await mongoCoupons.findById(id);
+    } catch {}
+    if (!coupon) {
+      const rows = await db.select().from(couponsTable).where(eq(couponsTable.id, id)).limit(1).catch(() => []);
+      coupon = rows[0] || null;
+    }
+    if (!coupon) {
+      res.status(404).json({ error: "Coupon not found" });
+      return;
+    }
+
+    // Retrieve redemptions from MongoDB coupon_redemptions or orders
+    let redemptions: any[] = [];
+    try {
+      redemptions = await mongoCouponRedemptions.findMany({
+        $or: [{ couponId: coupon.id }, { couponCode: (coupon.code || "").toUpperCase() }]
+      }, { sort: { redeemedAt: -1 } });
+    } catch {}
+
+    // Also look up orders placed with this coupon if redemptions table hasn't recorded all
+    let matchedOrders: any[] = [];
+    try {
+      matchedOrders = await mongoOrders.findMany({
+        $or: [
+          { couponCode: (coupon.code || "").toUpperCase() },
+          { couponId: coupon.id }
+        ]
+      }, { sort: { createdAt: -1 }, limit: 500 });
+    } catch {}
+
+    const redemptionMap = new Map<string, any>();
+
+    for (const r of redemptions) {
+      const key = r.orderId || r.id;
+      redemptionMap.set(key, {
+        id: r.id,
+        orderId: r.orderId,
+        displayOrderId: r.displayOrderId || r.orderId,
+        customerName: r.customerName || "Customer",
+        customerEmail: r.customerEmail || "",
+        userId: r.userId || "",
+        discountAmount: Number(r.discountAmount || 0),
+        orderTotal: Number(r.orderTotal || 0),
+        paymentStatus: r.paymentStatus || "unpaid",
+        paymentMethod: r.paymentMethod || "cod",
+        status: r.status || "confirmed",
+        redeemedAt: r.redeemedAt || r.createdAt || new Date(),
+      });
+    }
+
+    for (const ord of matchedOrders) {
+      const key = ord.id;
+      if (!redemptionMap.has(key)) {
+        redemptionMap.set(key, {
+          id: ord.id,
+          orderId: ord.id,
+          displayOrderId: ord.displayId || ord.id,
+          customerName: ord.address?.name || "Customer",
+          customerEmail: ord.customerEmail || ord.address?.email || "",
+          userId: ord.userId || "",
+          discountAmount: Number(ord.discount || 0),
+          orderTotal: Number(ord.total || 0),
+          paymentStatus: ord.paymentStatus || "unpaid",
+          paymentMethod: ord.paymentMethod || "cod",
+          status: ord.status || "confirmed",
+          redeemedAt: ord.createdAt || new Date(),
+        });
+      }
+    }
+
+    const customerList = Array.from(redemptionMap.values());
+    customerList.sort((a, b) => new Date(b.redeemedAt).getTime() - new Date(a.redeemedAt).getTime());
+
+    const totalRedemptions = Math.max(customerList.length, coupon.usedCount || 0);
+    const totalDiscountAmount = customerList.reduce((sum, item) => sum + item.discountAmount, 0);
+    const totalOrdersGenerated = customerList.length;
+    const successfulPayments = customerList.filter(
+      (item) => item.paymentStatus === "paid" || ["confirmed", "processing", "shipped", "delivered"].includes(item.status)
+    ).length;
+    const failedPayments = customerList.filter(
+      (item) => item.paymentStatus === "failed" || item.status === "payment_failed"
+    ).length;
+
+    const remainingUses = coupon.maxUses != null ? Math.max(0, coupon.maxUses - totalRedemptions) : null;
+    const conversionRate = totalOrdersGenerated > 0 ? ((successfulPayments / totalOrdersGenerated) * 100).toFixed(1) + "%" : "0.0%";
+
+    const dateMap = new Map<string, { date: string; redemptions: number; totalDiscount: number; totalSales: number }>();
+    for (const item of customerList) {
+      const d = new Date(item.redeemedAt).toISOString().slice(0, 10);
+      const cur = dateMap.get(d) || { date: d, redemptions: 0, totalDiscount: 0, totalSales: 0 };
+      cur.redemptions += 1;
+      cur.totalDiscount += item.discountAmount;
+      cur.totalSales += item.orderTotal;
+      dateMap.set(d, cur);
+    }
+    const performanceByDate = Array.from(dateMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+
+    res.json({
+      coupon: {
+        id: coupon.id,
+        code: coupon.code,
+        type: coupon.type,
+        value: coupon.value,
+        offerDisplayText: coupon.offerDisplayText ?? null,
+        minimumOrderValue: coupon.minimumOrderValue ? Number(coupon.minimumOrderValue) : 0,
+        maxDiscountAmount: coupon.maxDiscountAmount != null ? Number(coupon.maxDiscountAmount) : null,
+        eligibleCategories: coupon.eligibleCategories ?? null,
+        applicableProducts: coupon.applicableProducts ?? null,
+        maxUses: coupon.maxUses ?? null,
+        usedCount: totalRedemptions,
+        active: coupon.active,
+        startDate: coupon.startDate ?? null,
+        expiresAt: coupon.expiresAt ?? null,
+      },
+      analytics: {
+        totalRedemptions,
+        totalDiscountAmount,
+        totalOrdersGenerated,
+        successfulPayments,
+        failedPayments,
+        remainingUses,
+        conversionRate,
+        performanceByDate,
+      },
+      customers: customerList,
+    });
+  } catch (err: any) {
+    req.log?.error?.({ err, id }, "Failed to get coupon analytics");
+    res.status(500).json({ error: "Failed to get coupon analytics" });
+  }
+});
+
+// DELETE /admin/coupons/:id/permanent — permanently delete coupon with safeguards
+router.delete("/admin/coupons/:id/permanent", requireAdminKey, async (req: any, res: any): Promise<void> => {
+  const { id } = req.params;
+  const force = req.query.force === "true";
+
+  try {
+    let coupon: any = null;
+    try {
+      coupon = await mongoCoupons.findById(id);
+    } catch {}
+    if (!coupon) {
+      const rows = await db.select().from(couponsTable).where(eq(couponsTable.id, id)).limit(1).catch(() => []);
+      coupon = rows[0] || null;
+    }
+    if (!coupon) {
+      res.status(404).json({ error: "Coupon not found" });
+      return;
+    }
+
+    const usedCount = Number(coupon.usedCount || 0);
+    let redemptionCount = 0;
+    try {
+      redemptionCount = await mongoCouponRedemptions.count({
+        $or: [{ couponId: coupon.id }, { couponCode: (coupon.code || "").toUpperCase() }]
+      });
+    } catch {}
+
+    if ((usedCount > 0 || redemptionCount > 0) && !force) {
+      res.status(400).json({
+        error: `Coupon "${coupon.code}" has ${Math.max(usedCount, redemptionCount)} customer redemptions and cannot be deleted without losing historical records. We recommend deactivating it instead. Pass force=true to permanently delete anyway.`,
+        canDeactivate: true,
+      });
+      return;
+    }
+
+    try {
+      await mongoCoupons.delete(id);
+    } catch {}
+    try {
+      await db.delete(couponsTable).where(eq(couponsTable.id, id)).catch(() => {});
+    } catch {}
+
+    writeAuditLog({ action: "coupon_deleted_permanently", module: "Coupons", details: { couponId: id, code: coupon.code }, ipAddress: getIp(req) }).catch(() => {});
+    emitCouponEvent("coupon:deleted", { id });
+    res.json({ success: true, message: `Coupon "${coupon.code}" permanently deleted` });
+  } catch (err) {
+    req.log?.error?.({ err, id }, "Failed to permanently delete coupon");
+    res.status(500).json({ error: "Failed to permanently delete coupon" });
+  }
+});
+
 // ─── Shopper endpoints ────────────────────────────────────────────────────────
 
 router.get("/coupons/validate", couponValidateLimiter, async (req: any, res: any): Promise<void> => {
@@ -606,6 +848,7 @@ router.get("/coupons/validate", couponValidateLimiter, async (req: any, res: any
       if (!result.valid) {
         res.status(400).json({
           error: result.error,
+          message: result.message || result.error,
           valid: false,
           shortfall: result.shortfall,
           minimumOrderValue: result.minimumOrderValue,
@@ -630,6 +873,7 @@ router.get("/coupons/validate", couponValidateLimiter, async (req: any, res: any
         minimumOrderValue: result.coupon!.minimumOrderValue ?? 0,
         maxDiscountAmount: result.coupon!.maxDiscountAmount ?? null,
         eligibleCategories: result.coupon!.eligibleCategories ?? null,
+        applicableProducts: result.coupon!.applicableProducts ?? null,
         firstOrderOnly: Boolean(result.coupon!.firstOrderOnly),
         perCustomerLimit: result.coupon!.perCustomerLimit ?? null,
         startDate: result.coupon!.startDate ?? null,
@@ -637,6 +881,7 @@ router.get("/coupons/validate", couponValidateLimiter, async (req: any, res: any
         usedCount: result.coupon!.usedCount ?? 0,
         expiresAt: result.coupon!.expiresAt,
         discount: result.discount,
+        message: result.message || `Congratulations! You saved ₹${result.discount.toLocaleString("en-IN")} using ${result.coupon!.code}.`,
         eligibleSubtotal: result.eligibleSubtotal,
         totalMerchandiseSubtotal: result.totalMerchandiseSubtotal,
         shortfall: result.shortfall,
@@ -741,6 +986,7 @@ router.post("/coupons/validate", couponValidateLimiter, async (req: any, res: an
     if (!result.valid) {
       res.status(400).json({
         error: result.error,
+        message: result.message || result.error,
         valid: false,
         shortfall: result.shortfall,
         minimumOrderValue: result.minimumOrderValue,
@@ -757,6 +1003,7 @@ router.post("/coupons/validate", couponValidateLimiter, async (req: any, res: an
       minimumOrderValue: result.coupon!.minimumOrderValue ?? 0,
       maxDiscountAmount: result.coupon!.maxDiscountAmount ?? null,
       eligibleCategories: result.coupon!.eligibleCategories ?? null,
+      applicableProducts: result.coupon!.applicableProducts ?? null,
       firstOrderOnly: Boolean(result.coupon!.firstOrderOnly),
       perCustomerLimit: result.coupon!.perCustomerLimit ?? null,
       startDate: result.coupon!.startDate ?? null,
@@ -764,6 +1011,7 @@ router.post("/coupons/validate", couponValidateLimiter, async (req: any, res: an
       usedCount: result.coupon!.usedCount ?? 0,
       expiresAt: result.coupon!.expiresAt,
       discount: result.discount,
+      message: result.message || `Congratulations! You saved ₹${result.discount.toLocaleString("en-IN")} using ${result.coupon!.code}.`,
       eligibleSubtotal: result.eligibleSubtotal,
       totalMerchandiseSubtotal: result.totalMerchandiseSubtotal,
       shortfall: result.shortfall,
@@ -798,25 +1046,56 @@ router.get("/coupons/available", requireAuth, async (req: any, res: any): Promis
         (c.maxUses === null || c.maxUses === undefined || (c.usedCount || 0) < c.maxUses),
     );
 
-    res.json({
-      coupons: available.map((c) => ({
+    const subtotalParam =
+      req.query.subtotal !== undefined
+        ? Number(req.query.subtotal)
+        : req.query.cartSubtotal !== undefined
+        ? Number(req.query.cartSubtotal)
+        : null;
+
+    const coupons = available.map((c) => {
+      const mov = c.minimumOrderValue ? Number(c.minimumOrderValue) : 0;
+      let isEligible = true;
+      let shortfall = 0;
+      let statusMessage = "";
+
+      if (subtotalParam !== null && !isNaN(subtotalParam)) {
+        isEligible = subtotalParam >= mov;
+        shortfall = Math.max(0, mov - subtotalParam);
+        const discountLabel = c.type === "percent" ? `${c.value}% OFF` : `₹${c.value} OFF`;
+        if (isEligible) {
+          statusMessage = `Congratulations! You are eligible for ${discountLabel}.`;
+        } else if (subtotalParam === 0) {
+          statusMessage = `Shop for ₹${mov.toLocaleString("en-IN")} to unlock ${discountLabel}.`;
+        } else {
+          statusMessage = `Add ₹${shortfall.toLocaleString("en-IN")} more to unlock this offer.`;
+        }
+      }
+
+      return {
         id: c.id,
         code: c.code,
         type: c.type,
         value: c.value,
         description: c.description,
         offerDisplayText: c.offerDisplayText ?? null,
-        minimumOrderValue: c.minimumOrderValue ?? 0,
+        minimumOrderValue: mov,
         maxDiscountAmount: c.maxDiscountAmount ?? null,
         eligibleCategories: c.eligibleCategories ?? null,
+        applicableProducts: c.applicableProducts ?? null,
         firstOrderOnly: Boolean(c.firstOrderOnly),
         perCustomerLimit: c.perCustomerLimit ?? null,
         startDate: c.startDate ?? null,
         expiresAt: c.expiresAt,
         maxUses: c.maxUses ?? null,
         usedCount: c.usedCount ?? 0,
-      })),
+        isEligible,
+        shortfall,
+        statusMessage,
+      };
     });
+
+    res.json({ coupons });
   } catch (err) {
     req.log.error({ err }, "Failed to fetch available coupons");
     res.status(500).json({ error: "Failed to fetch coupons" });

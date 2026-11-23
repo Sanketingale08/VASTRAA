@@ -493,7 +493,10 @@ function DetailContent() {
                     const pct = data.customers.reviewCount > 0 ? (count / data.customers.reviewCount) * 100 : 0;
                     return (
                       <div key={star} className="flex items-center gap-2 text-xs">
-                        <span className="w-8 text-gray-500">{star}★</span>
+                        <span className="w-9 text-gray-500 inline-flex items-center gap-0.5">
+                          {star}
+                          <Star size={10} className="fill-amber-400 text-amber-400 shrink-0" />
+                        </span>
                         <div className="flex-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
                           <div className="h-full rounded-full" style={{ width: `${pct}%`, background: GOLD }} />
                         </div>

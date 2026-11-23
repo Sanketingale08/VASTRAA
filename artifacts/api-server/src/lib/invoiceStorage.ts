@@ -55,17 +55,25 @@ function getInvoicesCollection() {
 export async function findStoredInvoice(
   orderId: string,
   sellerId?: string | null,
-  documentType?: string
+  documentType?: string,
+  alternateOrderId?: string
 ): Promise<StoredInvoiceSnapshot | null> {
   if (!orderId) return null;
+
+  const orderIds = Array.from(new Set([orderId, alternateOrderId].filter(Boolean) as string[]));
+  const orConditions = orderIds.flatMap((id) => [
+    { orderId: id },
+    { displayOrderId: id },
+    { masterOrderId: id },
+  ]);
 
   if (isMongoDbConnected()) {
     try {
       const col = getInvoicesCollection();
       const filter: any = {
-        $or: [{ orderId }, { displayOrderId: orderId }],
+        $or: orConditions,
       };
-      if (sellerId !== undefined) {
+      if (sellerId !== undefined && sellerId !== null) {
         filter.sellerId = sellerId;
       }
       if (documentType) {
@@ -84,8 +92,8 @@ export async function findStoredInvoice(
 
   // Fallback to in-memory store
   for (const inv of inMemoryInvoicesMap.values()) {
-    if (inv.orderId === orderId || inv.displayOrderId === orderId) {
-      if (sellerId !== undefined && inv.sellerId !== sellerId) continue;
+    if (orderIds.some((id) => inv.orderId === id || inv.displayOrderId === id || (inv as any).masterOrderId === id)) {
+      if (sellerId !== undefined && sellerId !== null && inv.sellerId !== sellerId) continue;
       if (documentType && inv.documentType !== documentType) continue;
       return inv;
     }
@@ -132,15 +140,24 @@ export async function saveInvoiceSnapshot(
  */
 export async function listInvoicesForOrder(
   orderId: string,
-  caller?: { role?: string; vendorId?: string; userId?: string }
+  caller?: { role?: string; vendorId?: string; userId?: string },
+  alternateOrderId?: string
 ): Promise<StoredInvoiceSnapshot[]> {
+  const orderIds = Array.from(new Set([orderId, alternateOrderId].filter(Boolean) as string[]));
+  const orConditions = orderIds.flatMap((id) => [
+    { orderId: id },
+    { displayOrderId: id },
+    { masterOrderId: id },
+    { id },
+  ]);
+
   let list: StoredInvoiceSnapshot[] = [];
 
   if (isMongoDbConnected()) {
     try {
       const col = getInvoicesCollection();
       list = await col
-        .find({ $or: [{ orderId }, { displayOrderId: orderId }] })
+        .find({ $or: orConditions })
         .sort({ issuedAt: 1 })
         .toArray();
     } catch (err) {
@@ -150,7 +167,7 @@ export async function listInvoicesForOrder(
 
   if (list.length === 0) {
     for (const inv of inMemoryInvoicesMap.values()) {
-      if (inv.orderId === orderId || inv.displayOrderId === orderId) {
+      if (orderIds.some((id) => inv.orderId === id || inv.displayOrderId === id || (inv as any).masterOrderId === id || inv.id === id)) {
         list.push(inv);
       }
     }
@@ -251,9 +268,13 @@ export async function ensureOrderInvoicesGenerated(order: any): Promise<StoredIn
   // Determine unique vendors
   const vendorMap = new Map<string, string>();
   for (const it of orderItems) {
+    if (!it) continue;
     const vid = it.vendorId || it.sellerId || "default";
     const vname = it.vendorName || it.sellerName || "VASTRAA Artisan";
     vendorMap.set(String(vid), vname);
+  }
+  if (vendorMap.size === 0) {
+    vendorMap.set("default", order.seller?.name || "VASTRAA Artisan");
   }
   const isMultiVendor = vendorMap.size > 1;
 
@@ -261,7 +282,7 @@ export async function ensureOrderInvoicesGenerated(order: any): Promise<StoredIn
 
   if (isMultiVendor) {
     // 1. Master Order Summary
-    let mosSnapshot = await findStoredInvoice(order.id, null, "master_order_summary");
+    let mosSnapshot = await findStoredInvoice(order.id, null, "master_order_summary", order.displayId);
     if (!mosSnapshot) {
       const mosData = await buildMasterOrderSummary(order);
       mosSnapshot = {
@@ -283,15 +304,15 @@ export async function ensureOrderInvoicesGenerated(order: any): Promise<StoredIn
         gatewayReference: (mosData.order as any)?.gateway_ref || order.cashfreePaymentId || null,
         refundReference: null,
         financials: {
-          gross: mosData.totals.items_subtotal,
-          discount: mosData.totals.discount,
-          taxable: mosData.totals.taxable,
-          cgst: mosData.totals.cgst,
-          sgst: mosData.totals.sgst,
-          igst: mosData.totals.igst,
+          gross: mosData.totals?.items_subtotal ?? Number(order.totalAmount || order.total || 0),
+          discount: mosData.totals?.discount ?? 0,
+          taxable: mosData.totals?.taxable ?? Number(order.totalAmount || order.total || 0),
+          cgst: mosData.totals?.cgst ?? 0,
+          sgst: mosData.totals?.sgst ?? 0,
+          igst: mosData.totals?.igst ?? 0,
           platformFee: 0,
-          shippingFee: mosData.totals.charges,
-          grandTotal: mosData.totals.grand,
+          shippingFee: mosData.totals?.charges ?? 0,
+          grandTotal: mosData.totals?.grand ?? Number(order.totalAmount || order.total || 0),
         },
         invoiceData: mosData,
         pdfFilename: `Summary-${mosData.invoice.number}.pdf`,
@@ -307,7 +328,7 @@ export async function ensureOrderInvoicesGenerated(order: any): Promise<StoredIn
 
     // 2. Separate seller-specific invoices
     for (const [vId, vName] of vendorMap.entries()) {
-      let invSnapshot = await findStoredInvoice(order.id, vId, "tax_invoice");
+      let invSnapshot = await findStoredInvoice(order.id, vId, "tax_invoice", order.displayId);
       if (!invSnapshot) {
         const invData = await buildInvoiceData(order, vId, undefined, "tax_invoice");
         invSnapshot = {
@@ -329,15 +350,15 @@ export async function ensureOrderInvoicesGenerated(order: any): Promise<StoredIn
           gatewayReference: (invData.order as any)?.gateway_ref || order.cashfreePaymentId || null,
           refundReference: null,
           financials: {
-            gross: invData.totals.items_subtotal,
-            discount: invData.totals.discount,
-            taxable: invData.totals.taxable,
-            cgst: invData.totals.cgst,
-            sgst: invData.totals.sgst,
-            igst: invData.totals.igst,
+            gross: invData.totals?.items_subtotal ?? Number(order.totalAmount || order.total || 0),
+            discount: invData.totals?.discount ?? 0,
+            taxable: invData.totals?.taxable ?? Number(order.totalAmount || order.total || 0),
+            cgst: invData.totals?.cgst ?? 0,
+            sgst: invData.totals?.sgst ?? 0,
+            igst: invData.totals?.igst ?? 0,
             platformFee: 0,
-            shippingFee: invData.totals.charges,
-            grandTotal: invData.totals.grand,
+            shippingFee: invData.totals?.charges ?? 0,
+            grandTotal: invData.totals?.grand ?? Number(order.totalAmount || order.total || 0),
           },
           invoiceData: invData,
           pdfFilename: `Invoice-${invData.invoice.number}.pdf`,
@@ -354,9 +375,9 @@ export async function ensureOrderInvoicesGenerated(order: any): Promise<StoredIn
   } else {
     // Single vendor order -> Tax Invoice
     const singleVendorId = vendorMap.keys().next().value || null;
-    let invSnapshot = await findStoredInvoice(order.id, null, "tax_invoice");
-    if (!invSnapshot && singleVendorId) {
-      invSnapshot = await findStoredInvoice(order.id, singleVendorId, "tax_invoice");
+    let invSnapshot = await findStoredInvoice(order.id, singleVendorId, "tax_invoice", order.displayId);
+    if (!invSnapshot) {
+      invSnapshot = await findStoredInvoice(order.id, undefined, "tax_invoice", order.displayId);
     }
     if (!invSnapshot) {
       const invData = await buildInvoiceData(order, undefined, undefined, "tax_invoice");
@@ -379,15 +400,15 @@ export async function ensureOrderInvoicesGenerated(order: any): Promise<StoredIn
         gatewayReference: (invData.order as any)?.gateway_ref || order.cashfreePaymentId || null,
         refundReference: null,
         financials: {
-          gross: invData.totals.items_subtotal,
-          discount: invData.totals.discount,
-          taxable: invData.totals.taxable,
-          cgst: invData.totals.cgst,
-          sgst: invData.totals.sgst,
-          igst: invData.totals.igst,
+          gross: invData.totals?.items_subtotal ?? Number(order.totalAmount || order.total || 0),
+          discount: invData.totals?.discount ?? 0,
+          taxable: invData.totals?.taxable ?? Number(order.totalAmount || order.total || 0),
+          cgst: invData.totals?.cgst ?? 0,
+          sgst: invData.totals?.sgst ?? 0,
+          igst: invData.totals?.igst ?? 0,
           platformFee: 0,
-          shippingFee: invData.totals.charges,
-          grandTotal: invData.totals.grand,
+          shippingFee: invData.totals?.charges ?? 0,
+          grandTotal: invData.totals?.grand ?? Number(order.totalAmount || order.total || 0),
         },
         invoiceData: invData,
         pdfFilename: `Invoice-${invData.invoice.number}.pdf`,

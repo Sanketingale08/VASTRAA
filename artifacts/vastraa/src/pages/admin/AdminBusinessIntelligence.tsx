@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import {
   TrendingUp, TrendingDown, IndianRupee, ShoppingBag, Package, Users, Store,
-  Award, LineChart as LineChartIcon, RefreshCw,
+  Award, LineChart as LineChartIcon, RefreshCw, Star,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -320,7 +320,13 @@ function BusinessIntelligenceContent() {
                     <span className="text-xs font-bold w-5 text-gray-300">{i + 1}</span>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-semibold truncate" style={{ color: NAVY }}>{p.name}</div>
-                      <div className="text-xs text-gray-400">{p.vendorName} · {p.category} · {p.unitsSold} sold · ★{(p.rating ?? 0).toFixed(1)}</div>
+                      <div className="text-xs text-gray-400 flex items-center gap-1 flex-wrap">
+                        <span>{p.vendorName} · {p.category} · {p.unitsSold} sold ·</span>
+                        <span className="inline-flex items-center gap-0.5">
+                          <Star size={11} className="fill-amber-400 text-amber-400 shrink-0" />
+                          {(p.rating ?? 0).toFixed(1)}
+                        </span>
+                      </div>
                     </div>
                     <div className="text-sm font-semibold" style={{ color: NAVY }}>{fmt(p.revenue)}</div>
                   </div>

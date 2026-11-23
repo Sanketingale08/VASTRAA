@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { Router, Request, Response } from "express";
-import { db, vendorsTable, eq, or, mongoUsers, mongoSessions, mongoSellers } from "@workspace/db";
+import { db, vendorsTable, eq, or, sql, mongoUsers, mongoSessions, mongoSellers } from "@workspace/db";
 import { hashPassword, verifyPassword } from "../lib/passwords";
 import {
   createAuthSession,
@@ -196,7 +196,7 @@ const handleSignUp = async (req: Request, res: Response): Promise<void> => {
         insertErr?.message?.includes("E11000") ||
         insertErr?.message?.includes("duplicate key")
       ) {
-        res.status(400).json({ success: false, error: "An account with this email or User ID already exists. Please log in instead." });
+        res.status(400).json({ success: false, error: "An account with this email or mobile number already exists. Please log in instead." });
         return;
       }
       throw insertErr;
@@ -484,15 +484,18 @@ router.post("/api/auth/resend-verification", otpRateLimiter, handleResendVerific
  */
 const handleSignIn = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, id, userId, username, password } = req.body || {};
-    const rawIdentifier = (email || id || userId || username || "").toString();
+    const { email, id, userId, username, identifier, mobile, phone, password } = req.body || {};
+    const rawIdentifier = (email || identifier || mobile || phone || id || userId || username || "").toString().trim();
 
-    if (!rawIdentifier || !rawIdentifier.trim() || !password || typeof password !== "string") {
-      res.status(401).json({ success: false, error: "Invalid ID or Password." });
+    if (!rawIdentifier || !password || typeof password !== "string") {
+      res.status(401).json({ success: false, error: "Invalid email, mobile number, or password.", message: "Invalid email, mobile number, or password" });
       return;
     }
 
-    const cleanEmail = rawIdentifier.trim().toLowerCase();
+    const rawDigits = rawIdentifier.replace(/\D/g, "");
+    const cleanEmail = rawIdentifier.includes("@")
+      ? rawIdentifier.toLowerCase()
+      : (rawDigits.length >= 10 ? rawDigits.slice(-10) : rawIdentifier.toLowerCase());
 
     const clientIp = getIp(req);
 
@@ -510,28 +513,42 @@ const handleSignIn = async (req: Request, res: Response): Promise<void> => {
       res.status(429).json({
         success: false,
         error: lockout.retryMessage || "Your login is temporarily locked. Please try again later.",
+        message: lockout.retryMessage || "Your login is temporarily locked. Please try again later.",
         code: "ACCOUNT_TEMPORARILY_LOCKED",
         retryAfterSeconds: lockout.remainingSeconds,
       });
       return;
     }
 
-    // 1. Look up user by email or ID/userId for Customer role
-    let user = await mongoUsers.findByEmail(cleanEmail, "customer");
+    // 1. Look up user by email or mobile number for Customer role
+    let user = await mongoUsers.findByEmailOrPhone(rawIdentifier, "customer");
     if (!user) {
-      const byId = (await mongoUsers.findById(rawIdentifier.trim())) || (await mongoUsers.findById(cleanEmail));
-      if (byId && (byId.role === "customer" || !byId.role)) {
+      const byId = (await mongoUsers.findById(rawIdentifier)) || (await mongoUsers.findById(cleanEmail));
+      if (byId && (byId.role === "customer" || byId.role === "user" || !byId.role)) {
         user = byId;
       }
     }
     if (!user) {
-      const candidate = await mongoUsers.findByEmail(cleanEmail);
-      if (candidate && (candidate.role === "customer" || !candidate.role)) {
+      const candidate = await mongoUsers.findByEmailOrPhone(rawIdentifier);
+      if (candidate && (candidate.role === "customer" || candidate.role === "user" || !candidate.role)) {
         user = candidate;
       } else if (candidate && candidate.role === "seller") {
         res.status(403).json({
           success: false,
-          error: "This email is registered as a Seller account. Please log in using the Seller Portal.",
+          error: "This account is registered as a Seller account. Please log in using the Seller Portal.",
+          message: "This account is registered as a Seller account. Please log in using the Seller Portal.",
+          code: "SELLER_ACCOUNT_WRONG_PORTAL",
+        });
+        return;
+      }
+    }
+    if (!user) {
+      const candidateSeller = await mongoSellers.findByEmailOrMobile(rawIdentifier);
+      if (candidateSeller) {
+        res.status(403).json({
+          success: false,
+          error: "This account is registered as a Seller account. Please log in using the Seller Portal.",
+          message: "This account is registered as a Seller account. Please log in using the Seller Portal.",
           code: "SELLER_ACCOUNT_WRONG_PORTAL",
         });
         return;
@@ -553,13 +570,35 @@ const handleSignIn = async (req: Request, res: Response): Promise<void> => {
         res.status(429).json({
           success: false,
           error: `Too many failed login attempts. Your account is temporarily locked for ${failState.lockMinutes} minutes.`,
+          message: `Too many failed login attempts. Your account is temporarily locked for ${failState.lockMinutes} minutes.`,
           code: "ACCOUNT_TEMPORARILY_LOCKED",
           retryAfterSeconds: failState.remainingSeconds,
         });
         return;
       }
 
-      res.status(401).json({ success: false, error: "Invalid ID or Password." });
+      res.status(401).json({ success: false, error: "Invalid email, mobile number, or password.", message: "Invalid email, mobile number, or password" });
+      return;
+    }
+
+    // Account status check for customer
+    const userStatus = (user as any).status;
+    if (userStatus === "suspended" || userStatus === "blocked") {
+      res.status(403).json({
+        success: false,
+        error: "Your account has been suspended.",
+        message: "Your account has been suspended",
+        code: "CUSTOMER_SUSPENDED",
+      });
+      return;
+    }
+    if (userStatus === "deactivated" || userStatus === "inactive") {
+      res.status(403).json({
+        success: false,
+        error: "Your account is inactive.",
+        message: "Your account is inactive",
+        code: "CUSTOMER_INACTIVE",
+      });
       return;
     }
 
@@ -569,7 +608,19 @@ const handleSignIn = async (req: Request, res: Response): Promise<void> => {
       mongoUsers.update(user.id, { email: user.email }).catch(() => {});
     }
 
-    const isPasswordValid = verifyPassword(password, user.passwordHash) || verifyPassword(password.trim(), user.passwordHash);
+    const candidateUserHashes = [
+      user.passwordHash,
+      (user as any).password,
+    ].filter((h): h is string => Boolean(h && typeof h === "string" && h.trim().length > 0));
+
+    let isPasswordValid = false;
+    for (const h of candidateUserHashes) {
+      if (verifyPassword(password, h) || verifyPassword(password.trim(), h)) {
+        isPasswordValid = true;
+        break;
+      }
+    }
+
     if (!isPasswordValid) {
       const failState = await recordFailedAttempt(cleanEmail, "customer", clientIp, req);
       writeAuditLog({
@@ -586,13 +637,14 @@ const handleSignIn = async (req: Request, res: Response): Promise<void> => {
         res.status(429).json({
           success: false,
           error: `Too many failed login attempts. Your account is temporarily locked for ${failState.lockMinutes} minutes.`,
+          message: `Too many failed login attempts. Your account is temporarily locked for ${failState.lockMinutes} minutes.`,
           code: "ACCOUNT_TEMPORARILY_LOCKED",
           retryAfterSeconds: failState.remainingSeconds,
         });
         return;
       }
 
-      res.status(401).json({ success: false, error: "Invalid ID or Password." });
+      res.status(401).json({ success: false, error: "Invalid email, mobile number, or password.", message: "Invalid email, mobile number, or password" });
       return;
     }
 
@@ -612,6 +664,7 @@ const handleSignIn = async (req: Request, res: Response): Promise<void> => {
       res.status(403).json({
         success: false,
         error: "Please verify your email address before logging in. Check your inbox for the verification link.",
+        message: "Please verify your email address before logging in. Check your inbox for the verification link.",
         code: "EMAIL_NOT_VERIFIED",
         isEmailVerified: false,
         email: user.email || cleanEmail,
@@ -636,7 +689,7 @@ const handleSignIn = async (req: Request, res: Response): Promise<void> => {
       },
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: "Invalid ID or Password." });
+    res.status(500).json({ success: false, error: "Invalid email or password.", message: "Invalid email or password" });
   }
 };
 
@@ -963,16 +1016,19 @@ router.post("/seller/reset-password", passwordResetLimiter, async (req: Request,
 /**
  * POST /api/seller/login — Authenticates seller credentials against the dedicated Seller data collection.
  */
-router.post("/seller/login", authRateLimiter, async (req: Request, res: Response): Promise<void> => {
+router.post(["/seller/login", "/api/seller/login"], authRateLimiter, async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, password, identifier } = req.body || {};
-    const inputIdentifier = (email || identifier || "").trim();
+    const { email, password, identifier, mobile, phone, sellerId, vendorId } = req.body || {};
+    const inputIdentifier = (email || identifier || mobile || phone || sellerId || vendorId || "").toString().trim();
     if (!inputIdentifier || !password || typeof password !== "string") {
-      res.status(401).json({ success: false, error: "Invalid ID or Password." });
+      res.status(401).json({ success: false, error: "Invalid email, mobile number, or password.", message: "Invalid email, mobile number, or password" });
       return;
     }
 
-    const cleanEmail = inputIdentifier.toLowerCase();
+    const rawDigits = inputIdentifier.replace(/\D/g, "");
+    const cleanEmail = inputIdentifier.includes("@")
+      ? inputIdentifier.toLowerCase()
+      : (rawDigits.length >= 10 ? rawDigits.slice(-10) : inputIdentifier.toLowerCase());
     const cleanPassword = password.trim();
     const clientIp = getIp(req);
 
@@ -990,26 +1046,47 @@ router.post("/seller/login", authRateLimiter, async (req: Request, res: Response
       res.status(429).json({
         success: false,
         error: lockout.retryMessage || "Your login is temporarily locked. Please try again later.",
+        message: lockout.retryMessage || "Your login is temporarily locked. Please try again later.",
         code: "ACCOUNT_TEMPORARILY_LOCKED",
         retryAfterSeconds: lockout.remainingSeconds,
       });
       return;
     }
 
-    // 1. Look up seller and user records by email, ownerId, sellerId, vendorId, or id
-    let seller = await mongoSellers.findByEmail(cleanEmail);
+    // 1. Look up seller and user records by email, mobile, ownerId, sellerId, vendorId, or id
+    let seller = await mongoSellers.findByEmailOrMobile(inputIdentifier);
     if (!seller) {
       seller = (await mongoSellers.findById(inputIdentifier)) ||
                (await mongoSellers.findBySellerId(inputIdentifier)) ||
                (await mongoSellers.findByVendorId(inputIdentifier)) ||
                (await mongoSellers.findByOwnerId(inputIdentifier));
     }
+    if (!seller && (inputIdentifier.toUpperCase() !== inputIdentifier || inputIdentifier.toLowerCase() !== inputIdentifier)) {
+      seller = (await mongoSellers.findById(inputIdentifier.toUpperCase())) ||
+               (await mongoSellers.findBySellerId(inputIdentifier.toUpperCase())) ||
+               (await mongoSellers.findById(inputIdentifier.toLowerCase())) ||
+               (await mongoSellers.findBySellerId(inputIdentifier.toLowerCase()));
+    }
 
-    let user: any = await mongoUsers.findByEmail(cleanEmail, "seller");
+    let user: any = await mongoUsers.findByEmailOrPhone(inputIdentifier, "seller");
     if (!user) {
       user = await mongoUsers.findById(inputIdentifier);
       if (user && user.role !== "seller") {
         user = null;
+      }
+    }
+
+    // Check if entered identifier belongs to a Customer trying to log into Seller Portal
+    if (!seller && !user) {
+      const candidateCustomer = await mongoUsers.findByEmailOrPhone(inputIdentifier);
+      if (candidateCustomer && (candidateCustomer.role === "customer" || candidateCustomer.role === "user" || !candidateCustomer.role)) {
+        res.status(403).json({
+          success: false,
+          error: "This account is registered as a Customer. Access to Seller Panel requires a Seller account.",
+          message: "This account is registered as a Customer. Access to Seller Panel requires a Seller account.",
+          code: "CUSTOMER_ACCOUNT_WRONG_PORTAL",
+        });
+        return;
       }
     }
 
@@ -1024,6 +1101,12 @@ router.post("/seller/login", authRateLimiter, async (req: Request, res: Response
       if (!user && (seller.email || seller.contactEmail)) {
         user = (await mongoUsers.findByEmail(seller.email, "seller")) ||
                (seller.contactEmail ? await mongoUsers.findByEmail(seller.contactEmail, "seller") : null);
+        if (user && user.role !== "seller") {
+          user = null;
+        }
+      }
+      if (!user && (seller.mobile || seller.phone)) {
+        user = await mongoUsers.findByEmailOrPhone(seller.mobile || seller.phone, "seller");
         if (user && user.role !== "seller") {
           user = null;
         }
@@ -1049,7 +1132,7 @@ router.post("/seller/login", authRateLimiter, async (req: Request, res: Response
             .where(or(...conditions))
             .limit(1);
 
-          if (pgRows.length > 0) {
+          if (pgRows && pgRows.length > 0) {
             const pgVendor = pgRows[0];
             if (!user && pgVendor.ownerId) {
               user = await mongoUsers.findById(pgVendor.ownerId);
@@ -1057,7 +1140,7 @@ router.post("/seller/login", authRateLimiter, async (req: Request, res: Response
             if (!user && pgVendor.contactEmail) {
               user = await mongoUsers.findByEmail(pgVendor.contactEmail);
             }
-            const pwdHash = user?.passwordHash || "";
+            const pwdHash = user?.passwordHash || (user as any)?.password || "";
             seller = await mongoSellers.insert({
               id: pgVendor.id,
               name: pgVendor.name,
@@ -1088,7 +1171,7 @@ router.post("/seller/login", authRateLimiter, async (req: Request, res: Response
         email: user.email,
         contactEmail: user.email,
         mobile: user.phone || "",
-        passwordHash: user.passwordHash || "",
+        passwordHash: user.passwordHash || (user as any)?.password || "",
         location: "India",
         rating: 4.8,
         sareesCount: 0,
@@ -1100,8 +1183,10 @@ router.post("/seller/login", authRateLimiter, async (req: Request, res: Response
 
     const candidateHashes = [
       seller?.passwordHash,
+      (seller as any)?.password,
       user?.passwordHash,
-    ].filter((h): h is string => Boolean(h && typeof h === "string" && (h.trim().startsWith("pbkdf2:") || h.trim().startsWith("$pbkdf2$") || h.trim().startsWith("pbkdf2$"))));
+      (user as any)?.password,
+    ].filter((h): h is string => Boolean(h && typeof h === "string" && h.trim().length > 0));
 
     if (!seller || candidateHashes.length === 0) {
       const failState = await recordFailedAttempt(cleanEmail, "seller", clientIp, req);
@@ -1117,24 +1202,26 @@ router.post("/seller/login", authRateLimiter, async (req: Request, res: Response
         res.status(429).json({
           success: false,
           error: `Too many failed login attempts. Your account is temporarily locked for ${failState.lockMinutes} minutes.`,
+          message: `Too many failed login attempts. Your account is temporarily locked for ${failState.lockMinutes} minutes.`,
           code: "ACCOUNT_TEMPORARILY_LOCKED",
           retryAfterSeconds: failState.remainingSeconds,
         });
         return;
       }
-      if (user && user.role === "customer") {
+      if (user && (user.role === "customer" || user.role === "user")) {
         res.status(403).json({
           success: false,
           error: "This account is registered as a Customer. Access to Seller Panel requires a Seller account.",
+          message: "This account is registered as a Customer. Access to Seller Panel requires a Seller account.",
           code: "CUSTOMER_ACCOUNT_WRONG_PORTAL",
         });
         return;
       }
-      res.status(401).json({ success: false, error: "Invalid ID or Password." });
+      res.status(401).json({ success: false, error: "Invalid email, mobile number, or password.", message: "Invalid email, mobile number, or password" });
       return;
     }
 
-    // Verify password against candidate PBKDF2 hashes (supports raw & trimmed password)
+    // Verify password against candidate hashes (supports bcrypt, PBKDF2, raw, etc.)
     let isValid = false;
     let matchedHash = "";
     for (const hash of candidateHashes) {
@@ -1160,12 +1247,13 @@ router.post("/seller/login", authRateLimiter, async (req: Request, res: Response
         res.status(429).json({
           success: false,
           error: `Too many failed login attempts. Your account is temporarily locked for ${failState.lockMinutes} minutes.`,
+          message: `Too many failed login attempts. Your account is temporarily locked for ${failState.lockMinutes} minutes.`,
           code: "ACCOUNT_TEMPORARILY_LOCKED",
           retryAfterSeconds: failState.remainingSeconds,
         });
         return;
       }
-      res.status(401).json({ success: false, error: "Invalid ID or Password." });
+      res.status(401).json({ success: false, error: "Invalid email, mobile number, or password.", message: "Invalid email, mobile number, or password" });
       return;
     }
 
@@ -1187,6 +1275,7 @@ router.post("/seller/login", authRateLimiter, async (req: Request, res: Response
     try {
       let freshSeller: any = null;
       if (seller.id) freshSeller = await mongoSellers.findById(seller.id);
+      if (!freshSeller && inputIdentifier) freshSeller = await mongoSellers.findByEmailOrMobile(inputIdentifier);
       if (!freshSeller && cleanEmail) freshSeller = await mongoSellers.findByEmail(cleanEmail);
       if (!freshSeller && seller.ownerId) freshSeller = await mongoSellers.findByOwnerId(seller.ownerId);
       if (freshSeller) {
@@ -1236,7 +1325,8 @@ router.post("/seller/login", authRateLimiter, async (req: Request, res: Response
     if (currentStatus === "pending" || (seller as any)?.approvalStatus === "pending") {
       res.status(403).json({
         success: false,
-        error: "Your shop registration is pending Super Admin approval. Please wait for approval before logging in.",
+        error: "Your account is awaiting admin approval. Shop registration is pending Super Admin approval.",
+        message: "Your account is awaiting admin approval",
         code: "VENDOR_PENDING",
         status: "pending",
       });
@@ -1247,6 +1337,7 @@ router.post("/seller/login", authRateLimiter, async (req: Request, res: Response
       res.status(403).json({
         success: false,
         error: currentStatusReason ? `Your shop application was rejected: ${currentStatusReason}` : "Your shop application has been rejected by Super Admin.",
+        message: currentStatusReason ? `Your shop application was rejected: ${currentStatusReason}` : "Your shop application has been rejected by Super Admin.",
         code: "VENDOR_REJECTED",
         status: currentStatus,
         statusReason: currentStatusReason,
@@ -1258,6 +1349,7 @@ router.post("/seller/login", authRateLimiter, async (req: Request, res: Response
       res.status(403).json({
         success: false,
         error: "Your account has been suspended.",
+        message: "Your account has been suspended",
         code: "VENDOR_SUSPENDED",
         status: currentStatus,
         statusReason: currentStatusReason,
@@ -1268,7 +1360,8 @@ router.post("/seller/login", authRateLimiter, async (req: Request, res: Response
     if (currentStatus === "deactivated") {
       res.status(403).json({
         success: false,
-        error: "Your account has been deactivated.",
+        error: "Your account is inactive.",
+        message: "Your account is inactive",
         code: "VENDOR_DEACTIVATED",
         status: currentStatus,
         statusReason: currentStatusReason,
@@ -1279,7 +1372,8 @@ router.post("/seller/login", authRateLimiter, async (req: Request, res: Response
     if (currentStatus !== "approved" && currentStatus !== "active") {
       res.status(403).json({
         success: false,
-        error: "Your seller account is not active.",
+        error: "Your account is inactive.",
+        message: "Your account is inactive",
         code: "VENDOR_INACTIVE",
         status: currentStatus,
       });

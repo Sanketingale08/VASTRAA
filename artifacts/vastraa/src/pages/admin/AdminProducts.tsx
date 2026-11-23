@@ -5,7 +5,8 @@ import {
   Search, ChevronDown, ChevronUp, Trash2, Edit2, Plus, X, Eye,
   ToggleLeft, ToggleRight, GripVertical, AlertTriangle, RefreshCw,
   ChevronLeft, ChevronRight, Upload, Image as ImageIcon, User, CheckCircle2,
-  Folder, ArrowUpDown, Filter, ShoppingBag, ShieldAlert, AlertCircle
+  Folder, ArrowUpDown, Filter, ShoppingBag, ShieldAlert, AlertCircle,
+  Settings, Target
 } from "lucide-react";
 import AdminLayout, { AdminGuard } from "./AdminLayout";
 import { adminHeaders, adminKey, adminFetch, adminAuthHeaders } from '@/lib/adminApi';
@@ -276,9 +277,21 @@ function ProductModal({ product, onClose, onRefresh, toast }: {
         <div className="border-b border-gray-100 px-5 flex gap-1 pt-3">
           {(["detail", "approve", "reject"] as const).map(t => (
             <button key={t} onClick={() => setTab(t)}
-              className={`px-3 py-2 text-xs font-semibold rounded-t-lg capitalize transition-colors
+              className={`px-3 py-2 text-xs font-semibold rounded-t-lg capitalize transition-colors inline-flex items-center gap-1.5
                 ${tab === t ? "text-[#C7CCD1] border-b-2 border-[#C7CCD1]" : "text-gray-500 hover:text-gray-700"}`}>
-              {t === "approve" ? "✓ Approve" : t === "reject" ? "✕ Reject" : "Details"}
+              {t === "approve" ? (
+                <>
+                  <CheckCircle size={13} className="text-emerald-600" />
+                  <span>Approve</span>
+                </>
+              ) : t === "reject" ? (
+                <>
+                  <XCircle size={13} className="text-rose-600" />
+                  <span>Reject</span>
+                </>
+              ) : (
+                <span>Details</span>
+              )}
             </button>
           ))}
         </div>
@@ -906,12 +919,12 @@ function ProductsTable({
                           <Star size={14} />
                         </button>
 
-                        {/* 1. ✓ Approve Action */}
+                        {/* 1. Approve Action */}
                         {p.status !== "approved" && (
                           <button
                             onClick={() => handleApprove(p)}
                             disabled={isBusy(p.id)}
-                            title="✓ Approve Product"
+                            title="Approve Product"
                             className="p-1.5 rounded-lg hover:bg-emerald-50 text-emerald-600 hover:text-emerald-700 disabled:opacity-40 transition-colors"
                           >
                             {busyMap[`${p.id}-approve`] ? (
@@ -922,12 +935,12 @@ function ProductsTable({
                           </button>
                         )}
 
-                        {/* 2. ✕ Reject Action */}
+                        {/* 2. Reject Action */}
                         {p.status !== "rejected" && (
                           <button
                             onClick={() => handleReject(p)}
                             disabled={isBusy(p.id)}
-                            title="✕ Reject Product"
+                            title="Reject Product"
                             className="p-1.5 rounded-lg hover:bg-red-50 text-red-500 hover:text-red-600 disabled:opacity-40 transition-colors"
                           >
                             {busyMap[`${p.id}-reject`] ? (
@@ -1316,53 +1329,58 @@ function CategoryDetailModal({
         <div className="border-b border-gray-100 px-6 flex gap-2 pt-2 bg-white overflow-x-auto">
           <button
             onClick={() => setTab("cover")}
-            className={`px-4 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 whitespace-nowrap ${
+            className={`px-4 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 whitespace-nowrap inline-flex items-center gap-1.5 ${
               tab === "cover"
                 ? "text-[#0D1B36] border-[#0D1B36] bg-gray-50/80"
                 : "text-gray-500 border-transparent hover:text-gray-700"
             }`}
           >
-            🖼️ Images & Banner
+            <ImageIcon size={14} className="shrink-0" />
+            <span>Images & Banner</span>
           </button>
           <button
             onClick={() => setTab("subcategories")}
-            className={`px-4 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 whitespace-nowrap ${
+            className={`px-4 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 whitespace-nowrap inline-flex items-center gap-1.5 ${
               tab === "subcategories"
                 ? "text-[#0D1B36] border-[#0D1B36] bg-gray-50/80"
                 : "text-gray-500 border-transparent hover:text-gray-700"
             }`}
           >
-            🌿 Subcategories & Subtypes ({subcategoriesList.length})
+            <Layers size={14} className="shrink-0" />
+            <span>Subcategories & Subtypes ({subcategoriesList.length})</span>
           </button>
           <button
             onClick={() => setTab("products")}
-            className={`px-4 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 whitespace-nowrap ${
+            className={`px-4 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 whitespace-nowrap inline-flex items-center gap-1.5 ${
               tab === "products"
                 ? "text-[#0D1B36] border-[#0D1B36] bg-gray-50/80"
                 : "text-gray-500 border-transparent hover:text-gray-700"
             }`}
           >
-            🛍️ Associated Products ({category.productCount ?? 0})
+            <ShoppingBag size={14} className="shrink-0" />
+            <span>Associated Products ({category.productCount ?? 0})</span>
           </button>
           <button
             onClick={() => setTab("assign")}
-            className={`px-4 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 whitespace-nowrap ${
+            className={`px-4 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 whitespace-nowrap inline-flex items-center gap-1.5 ${
               tab === "assign"
                 ? "text-[#0D1B36] border-[#0D1B36] bg-gray-50/80"
                 : "text-gray-500 border-transparent hover:text-gray-700"
             }`}
           >
-            🎯 Assign Products
+            <Target size={14} className="shrink-0" />
+            <span>Assign Products</span>
           </button>
           <button
             onClick={() => setTab("status")}
-            className={`px-4 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 whitespace-nowrap ${
+            className={`px-4 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 whitespace-nowrap inline-flex items-center gap-1.5 ${
               tab === "status"
                 ? "text-[#0D1B36] border-[#0D1B36] bg-gray-50/80"
                 : "text-gray-500 border-transparent hover:text-gray-700"
             }`}
           >
-            ⚙️ Display Order & Status
+            <Settings size={14} className="shrink-0" />
+            <span>Display Order & Status</span>
           </button>
         </div>
 

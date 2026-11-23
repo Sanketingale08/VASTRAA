@@ -14,7 +14,7 @@ import { eq, asc } from "drizzle-orm";
 import { requireAdminKey, verifyAdminAccessKey } from "../middlewares/isAdmin";
 import { isSeller as requireVendorAuth } from "../middlewares/isSeller";
 import { emitProductEvent } from "../lib/socket";
-import { globalCache, safeInvalidatePattern } from "../lib/cacheEngine";
+import { globalCache, safeInvalidatePattern, safeClearCache } from "../lib/cacheEngine";
 import { ObjectStorageService } from "../lib/objectStorage";
 
 const objectStorageService = new ObjectStorageService();

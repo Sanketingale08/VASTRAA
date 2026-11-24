@@ -43,6 +43,10 @@ jobs:
         run: |
           pnpm install --frozen-lockfile --prefer-offline || pnpm install
 
+      - name: Build TypeScript Libraries
+        run: |
+          pnpm run typecheck:libs
+
       - name: Validate Frontend TypeScript
         run: |
           pnpm --filter @workspace/twirldrape run typecheck

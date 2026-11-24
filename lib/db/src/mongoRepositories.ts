@@ -260,7 +260,7 @@ export const mongoSellers = {
           (s.contactEmail || "").toLowerCase() === cleanEmail ||
           ((s as any).ownerEmail || "").toLowerCase() === cleanEmail ||
           matchesPhone(s.mobile, phoneVariants, rawDigits) ||
-          matchesPhone(s.phone, phoneVariants, rawDigits) ||
+          matchesPhone((s as any).phone, phoneVariants, rawDigits) ||
           matchesPhone((s as any).contactPhone, phoneVariants, rawDigits) ||
           matchesPhone((s as any).alternateMobile, phoneVariants, rawDigits)
       ) || null
@@ -1598,7 +1598,7 @@ export const mongoUsers = {
     return Array.from(inMemoryUsersMap.values()).find(u => {
       const uEmail = (u.email || "").toLowerCase().trim();
       const matchesEmail = uEmail === cleanEmail;
-      const matchesRole = !role || u.role === role || (role === "customer" && (u.role === "user" || !u.role));
+      const matchesRole = !role || u.role === role || (role === "customer" && ((u.role as string) === "user" || !u.role));
       return matchesEmail && matchesRole;
     }) || null;
   },
@@ -1670,7 +1670,7 @@ export const mongoUsers = {
         matchesPhone(u.phone, phoneVariants, rawDigits) ||
         matchesPhone((u as any).mobile, phoneVariants, rawDigits) ||
         matchesPhone(u.alternateMobile, phoneVariants, rawDigits);
-      const matchesRole = !role || u.role === role || (role === "customer" && (u.role === "user" || !u.role));
+      const matchesRole = !role || u.role === role || (role === "customer" && ((u.role as string) === "user" || !u.role));
       return (matchesEmail || matchesPhoneNum) && matchesRole;
     }) || null;
   },

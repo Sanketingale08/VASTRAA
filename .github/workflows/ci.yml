@@ -3,8 +3,6 @@ name: Continuous Integration (CI)
 on:
   push:
     branches:
-      - main
-      - master
       - actions
       - 'feature/**'
   pull_request:
@@ -42,6 +40,11 @@ jobs:
       - name: Install Dependencies
         run: |
           pnpm install --frozen-lockfile --prefer-offline || pnpm install
+
+      - name: Build TypeScript Libraries
+        run: |
+          echo "Building shared TypeScript libraries..."
+          pnpm run typecheck:libs
 
       - name: Validate Frontend TypeScript
         run: |

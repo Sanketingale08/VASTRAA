@@ -134,10 +134,11 @@ export function GoogleOtpModal({
         onVerified(data);
       } else {
         onClose();
-        setLocation(
-          data.redirectUrl ||
-            (data.user?.role === "seller" ? "/seller/dashboard" : "/account/overview")
-        );
+        const target =
+          (data.redirectUrl && data.redirectUrl !== "/account/overview")
+            ? data.redirectUrl
+            : (data.user?.role === "seller" ? "/seller/dashboard" : data.user?.role === "super_admin" ? "/admin/dashboard" : "/");
+        setLocation(target);
       }
     } catch {
       setErrorMessage("Network error verifying OTP. Please check your connection.");

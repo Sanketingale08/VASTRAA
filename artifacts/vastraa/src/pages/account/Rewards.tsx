@@ -3,7 +3,7 @@ import { useAuth } from "@/context/AuthContext";
 import { apiFetch } from "@/lib/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Gift, Copy, CheckCheck, Star, Zap, Crown, ChevronLeft, ChevronRight } from "lucide-react";
+import { Gift, Copy, CheckCheck, Star, Zap, Crown, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { useToast } from "@/hooks/use-toast";
 
@@ -203,7 +203,7 @@ export function AccountRewardsPage() {
   const pointsToNext = tierCfg.nextThreshold ? Math.max(0, tierCfg.nextThreshold - balance) : 0;
 
   const shareText = summary
-    ? `Join VASTRAA — India's finest saree marketplace! Use my referral code ${summary.referralCode} when you sign up and shop. 🎁`
+    ? `Join VASTRAA — India's finest saree marketplace! Use my referral code ${summary.referralCode} when you sign up and shop.`
     : "";
 
   return (
@@ -332,9 +332,14 @@ export function AccountRewardsPage() {
 
           {!summaryLoading && summary && (
             <p className="text-xs text-gray-400 mt-3">
-              {summary.referralCount > 0
-                ? `🎉 You've successfully referred ${summary.referralCount} friend${summary.referralCount !== 1 ? "s" : ""} so far!`
-                : "No successful referrals yet. Share your code and start earning!"}
+              {summary.referralCount > 0 ? (
+                <span className="inline-flex items-center gap-1">
+                  <Sparkles size={13} className="text-amber-500 shrink-0" />
+                  You've successfully referred {summary.referralCount} friend{summary.referralCount !== 1 ? "s" : ""} so far!
+                </span>
+              ) : (
+                "No successful referrals yet. Share your code and start earning!"
+              )}
             </p>
           )}
         </motion.div>

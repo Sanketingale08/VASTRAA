@@ -7,6 +7,16 @@ import { GoogleAuthButton } from "@/components/GoogleAuthButton";
 import { GoogleOtpModal } from "@/components/GoogleOtpModal";
 import { apiFetch } from "@/lib/api";
 
+function isValidEmailOrMobile(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (trimmed.includes("@")) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+  }
+  const digits = trimmed.replace(/\D/g, "");
+  return digits.length >= 10 && digits.length <= 15;
+}
+
 export default function SignInPage() {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const [, setLocation] = useLocation();
@@ -26,9 +36,27 @@ export default function SignInPage() {
   const [resendCooldown, setResendCooldown] = useState(0);
 
   const searchParams = new URLSearchParams(window.location.search);
-  const redirectTarget = searchParams.get("redirect") || searchParams.get("from") || "/account/overview";
+  const redirectParam = searchParams.get("redirect") || searchParams.get("from");
   const isVerifiedParam = searchParams.get("verified") === "true";
   const isAlreadyVerifiedParam = searchParams.get("alreadyVerified") === "true";
+
+  // Role-based redirection: Customers land on Homepage ('/'), Sellers on dashboard, Admins on admin dashboard
+  const defaultTarget =
+    user?.role === "super_admin"
+      ? "/admin/dashboard"
+      : user?.role === "seller"
+      ? "/seller/dashboard"
+      : "/";
+
+  const redirectTarget =
+    redirectParam &&
+    redirectParam !== "/login" &&
+    redirectParam !== "/sign-in" &&
+    redirectParam !== "/signup" &&
+    redirectParam !== "/sign-up" &&
+    redirectParam !== "/account/overview"
+      ? redirectParam
+      : defaultTarget;
 
   // Google OTP Modal State
   const [otpModalState, setOtpModalState] = useState<{
@@ -84,7 +112,12 @@ export default function SignInPage() {
     setResendMessage(null);
 
     if (!email.trim()) {
-      setErrorMessage("Please enter your email address or User ID.");
+      setErrorMessage("Please enter your email address or mobile number.");
+      return;
+    }
+
+    if (!isValidEmailOrMobile(email)) {
+      setErrorMessage("Please enter a valid email address or 10-digit mobile number.");
       return;
     }
 
@@ -98,7 +131,21 @@ export default function SignInPage() {
     const result = await signIn(email.trim(), password);
 
     if (result.success) {
-      setLocation(redirectTarget);
+      const destination =
+        redirectParam &&
+        redirectParam !== "/login" &&
+        redirectParam !== "/sign-in" &&
+        redirectParam !== "/signup" &&
+        redirectParam !== "/sign-up" &&
+        redirectParam !== "/account/overview"
+          ? redirectParam
+          : result.user?.role === "super_admin"
+          ? "/admin/dashboard"
+          : result.user?.role === "seller"
+          ? "/seller/dashboard"
+          : "/";
+
+      setLocation(destination);
     } else {
       if (result.code === "EMAIL_NOT_VERIFIED" || result.isEmailVerified === false) {
         setUnverifiedEmail(result.email || email.trim());
@@ -145,8 +192,8 @@ export default function SignInPage() {
 
   return (
     <Layout>
-      <div className="flex min-h-[calc(100vh-180px)] items-center justify-center bg-[#F4F5F7] px-4 py-12 md:py-16">
-        <div className="w-full max-w-md bg-white rounded-2xl p-8 md:p-10 shadow-xl border border-[#C7CCD1]/40">
+      <div className="flex min-h-[calc(100vh-180px)] items-center justify-center bg-[#F4F5F7] px-3 sm:px-4 py-8 sm:py-12 md:py-16">
+        <div className="w-full max-w-md bg-white rounded-2xl p-5 sm:p-8 md:p-10 shadow-xl border border-[#C7CCD1]/40">
           {/* Header & Logo Branding */}
           <div className="text-center mb-8">
             <Link href="/" className="inline-block mb-3">
@@ -242,10 +289,10 @@ export default function SignInPage() {
 
           {/* Sign In Form */}
           <form onSubmit={handleSubmit} className="space-y-5" noValidate>
-            {/* Email / User ID Field */}
+            {/* Email Address or Mobile Number Field */}
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-[#0A1F44] mb-2">
-                Email Address / User ID
+                Email Address or Mobile Number
               </label>
               <div className="relative">
                 <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
@@ -253,7 +300,7 @@ export default function SignInPage() {
                   type="text"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="Email or User ID"
+                  placeholder="Enter your email address or mobile number"
                   className="w-full pl-10 pr-4 py-3 text-sm bg-[#F4F5F7] border border-[#C7CCD1]/50 rounded-lg outline-none text-[#0A1F44] focus:border-[#0A1F44] focus:bg-white transition-all"
                   disabled={isLoading}
                   required

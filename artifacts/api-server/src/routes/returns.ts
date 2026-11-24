@@ -8,6 +8,7 @@ import { requireVendorAuth } from "../middlewares/requireVendorAuth";
 import { r2StorageService } from "../services/r2StorageService";
 import { verifyCashfreeWebhookSignature } from "../lib/cashfree";
 import { logger } from "../lib/logger";
+import { insertAdminNotification } from "../lib/adminNotifications";
 
 const router = Router();
 
@@ -130,6 +131,14 @@ router.post("/returns", requireAuth, async (req: any, res: Response) => {
       preferredRefundMethod,
       bankDetails,
     });
+
+    const retId = (result as any)?.id || (result as any)?.returnRequest?.id;
+    await insertAdminNotification({
+      type: "refund_request",
+      title: `New ${requestType === "exchange" ? "Exchange" : "Refund"} Request Submitted`,
+      body: `Customer requested a ${requestType} for Order #${orderId} (${issueCategory}).`,
+      metadata: { returnId: retId, orderId, requestType, issueCategory, userId },
+    }).catch(() => {});
 
     res.status(201).json(result);
   } catch (err: any) {

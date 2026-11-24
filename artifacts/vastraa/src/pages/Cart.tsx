@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { ShoppingBag, Minus, Plus, Trash2, Tag, X, Heart, Clock, AlertTriangle, ArrowRight } from "lucide-react";
+import { ShoppingBag, Minus, Plus, Trash2, Tag, X, Heart, Clock, AlertTriangle, ArrowRight, Package, Lock, Truck, RotateCcw } from "lucide-react";
 import { Link } from "wouter";
 import { Layout } from "@/components/Layout";
 import { CartSkeleton } from "@/components/skeletons";
@@ -50,10 +50,19 @@ export function CartContent({ dashboardMode = false }: { dashboardMode?: boolean
   const [availableCouponsList, setAvailableCouponsList] = useState<any[]>([]);
   const [loadingCoupons, setLoadingCoupons] = useState(false);
 
-  const fetchAvailableCoupons = React.useCallback(async () => {
+  // ── Price & Cart Totals (Declared before any hooks or callbacks access them) ──
+  const totalQuantity = items.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+  const totalMRP = items.reduce((s, i) => s + Math.max(Number(i.originalPrice) || 0, Number(i.price) || 0) * (Number(i.quantity) || 0), 0);
+  const totalSellingPrice = items.reduce((s, i) => s + (Number(i.price) || 0) * (Number(i.quantity) || 0), 0);
+  const mrpDiscount = Math.max(0, totalMRP - totalSellingPrice);
+  const platformFee = 20; // Fixed ₹20 per order
+  const subtotal = totalSellingPrice;
+
+  const fetchAvailableCoupons = React.useCallback(async (customSubtotal?: number) => {
     try {
       setLoadingCoupons(true);
-      const res = await fetch("/api/coupons/available", { credentials: "include" });
+      const targetSubtotal = typeof customSubtotal === "number" ? customSubtotal : totalSellingPrice;
+      const res = await fetch(`/api/coupons/available?subtotal=${encodeURIComponent(targetSubtotal)}`, { credentials: "include" });
       if (res.ok) {
         const data = await res.json();
         setAvailableCouponsList(data.coupons || []);
@@ -63,7 +72,7 @@ export function CartContent({ dashboardMode = false }: { dashboardMode?: boolean
     } finally {
       setLoadingCoupons(false);
     }
-  }, []);
+  }, [totalSellingPrice]);
   const [recentIds, setRecentIds] = useState<string[]>([]);
   const [stockNotice, setStockNotice] = useState<StockAdjustment[]>([]);
   const validatedRef = React.useRef(false);
@@ -88,13 +97,6 @@ export function CartContent({ dashboardMode = false }: { dashboardMode?: boolean
     { query: { enabled: recentIds.length > 0 } as any }
   );
 
-  const totalQuantity = items.reduce((s, i) => s + i.quantity, 0);
-  const totalMRP = items.reduce((s, i) => s + Math.max(i.originalPrice ?? 0, i.price) * i.quantity, 0);
-  const totalSellingPrice = items.reduce((s, i) => s + i.price * i.quantity, 0);
-  const mrpDiscount = Math.max(0, totalMRP - totalSellingPrice);
-  const platformFee = 20; // Fixed ₹20 per order
-  const subtotal = totalSellingPrice;
-
   // Recalculate or auto-remove coupon when cart drops below MOV
   useEffect(() => {
     if (!appliedCoupon) return;
@@ -102,7 +104,7 @@ export function CartContent({ dashboardMode = false }: { dashboardMode?: boolean
     if (mov > 0 && totalSellingPrice < mov) {
       const code = appliedCoupon.code;
       setAppliedCoupon(null);
-      setCouponError(`Coupon ${code} removed: Cart subtotal (₹${totalSellingPrice.toLocaleString("en-IN")}) is below the required minimum of ₹${mov.toLocaleString("en-IN")}.`);
+      setCouponError(`Your cart value is below the minimum purchase requirement. Coupon removed.`);
     }
   }, [totalSellingPrice, appliedCoupon]);
 
@@ -327,18 +329,22 @@ export function CartContent({ dashboardMode = false }: { dashboardMode?: boolean
                   <div className="flex items-center gap-3 mt-3 flex-wrap">
                     <div className="flex items-center border border-[#C7CCD1]/30 rounded">
                       <button
+                        type="button"
                         onClick={() => updateQuantity(item.productId, item.quantity - 1)}
-                        className="p-1.5 hover:bg-[#C7CCD1]/10 transition-colors"
+                        aria-label="Decrease quantity"
+                        className="p-2 sm:p-1.5 min-w-[36px] min-h-[36px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center hover:bg-[#C7CCD1]/10 transition-colors cursor-pointer"
                       >
                         <Minus size={14} />
                       </button>
-                      <span className="px-4 text-sm font-bold min-w-[2.5rem] text-center">
+                      <span className="px-3 sm:px-4 text-sm font-bold min-w-[2.5rem] text-center">
                         {item.quantity}
                       </span>
                       <button
+                        type="button"
                         onClick={() => updateQuantity(item.productId, item.quantity + 1)}
                         disabled={item.quantity >= item.stock}
-                        className="p-1.5 hover:bg-[#C7CCD1]/10 transition-colors disabled:opacity-40"
+                        aria-label="Increase quantity"
+                        className="p-2 sm:p-1.5 min-w-[36px] min-h-[36px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center hover:bg-[#C7CCD1]/10 transition-colors disabled:opacity-40 cursor-pointer"
                       >
                         <Plus size={14} />
                       </button>
@@ -355,15 +361,17 @@ export function CartContent({ dashboardMode = false }: { dashboardMode?: boolean
 
                   <div className="flex items-center gap-3 mt-3">
                     <button
+                      type="button"
                       onClick={() => moveToWishlist(item.productId)}
-                      className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-[#0A1F44] dark:hover:text-[#C7CCD1] transition-colors"
+                      className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-[#0A1F44] dark:hover:text-[#C7CCD1] transition-colors py-1 cursor-pointer min-h-[32px]"
                     >
                       <Heart size={13} /> Save for Later
                     </button>
                     <span className="text-gray-300 dark:text-gray-600">|</span>
                     <button
+                      type="button"
                       onClick={() => removeItem(item.productId)}
-                      className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-600 transition-colors"
+                      className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 transition-colors py-1 cursor-pointer min-h-[32px]"
                     >
                       <Trash2 size={13} /> Remove
                     </button>
@@ -485,8 +493,9 @@ export function CartContent({ dashboardMode = false }: { dashboardMode?: boolean
                 </div>
               </div>
 
-              <div className="text-xs text-center text-gray-500 bg-[#F4F5F7] dark:bg-[#2A2E35] rounded px-3 py-2">
-                📦 Estimated delivery: <span className="font-semibold">{getDeliveryDate()}</span>
+              <div className="text-xs text-center text-gray-500 bg-[#F4F5F7] dark:bg-[#2A2E35] rounded px-3 py-2 flex items-center justify-center gap-1.5">
+                <Package size={13} className="text-[#0A1F44] dark:text-[#D4AF37] shrink-0" />
+                <span>Estimated delivery: <strong className="font-semibold">{getDeliveryDate()}</strong></span>
               </div>
 
               {hasOutOfStock && (
@@ -518,10 +527,19 @@ export function CartContent({ dashboardMode = false }: { dashboardMode?: boolean
                 Continue Shopping
               </button>
 
-              <div className="flex gap-4 text-center text-xs text-gray-400 pt-1">
-                <div className="flex-1">🔒 Secure Payment</div>
-                <div className="flex-1">🚚 Pan India Delivery</div>
-                <div className="flex-1">↩️ Easy Returns</div>
+              <div className="flex gap-4 text-center text-xs text-gray-500 dark:text-gray-400 pt-1">
+                <div className="flex-1 flex items-center justify-center gap-1.5">
+                  <Lock size={12} className="text-emerald-600 shrink-0" />
+                  <span>Secure Payment</span>
+                </div>
+                <div className="flex-1 flex items-center justify-center gap-1.5">
+                  <Truck size={12} className="text-[#0A1F44] dark:text-blue-300 shrink-0" />
+                  <span>Pan India Delivery</span>
+                </div>
+                <div className="flex-1 flex items-center justify-center gap-1.5">
+                  <RotateCcw size={12} className="text-[#D4AF37] shrink-0" />
+                  <span>Easy Returns</span>
+                </div>
               </div>
             </motion.div>
           </div>

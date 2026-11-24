@@ -489,9 +489,14 @@ async function handleSellerRegistration(req: any, res: any) {
     // 2. Generate formatted vendorId upon registration
     let generatedVendorId: string | undefined = undefined;
     try {
-      const seq = await getNextSequenceValue("vendor_id");
-      generatedVendorId = formatVendorId(seq);
+      if (typeof getNextSequenceValue === "function" && typeof formatVendorId === "function") {
+        const seq = await getNextSequenceValue("vendor_id");
+        generatedVendorId = formatVendorId(seq);
+      }
     } catch {
+      generatedVendorId = `TDV${Math.floor(100000 + Math.random() * 900000)}`;
+    }
+    if (!generatedVendorId) {
       generatedVendorId = `TDV${Math.floor(100000 + Math.random() * 900000)}`;
     }
 
@@ -730,7 +735,7 @@ async function handleSellerRegistration(req: any, res: any) {
       }
     }
 
-    const canonicalSellerId = getCanonicalSellerId(vendor) || assignedVendorId;
+    const canonicalSellerId = (typeof getCanonicalSellerId === "function" ? getCanonicalSellerId(vendor) : null) || vendor.sellerId || vendor.vendorId || assignedVendorId || vendor.id;
 
     return res.status(201).json({
       id: vendor.id,

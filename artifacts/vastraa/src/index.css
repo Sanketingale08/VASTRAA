@@ -164,13 +164,31 @@
 
 /* Responsive & Safe-Area Utilities */
 .pb-safe {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
 }
 .pt-safe {
-  padding-top: env(safe-area-inset-top, 0px);
+  padding-top: max(0.5rem, env(safe-area-inset-top, 0px));
+}
+.pl-safe {
+  padding-left: max(0.5rem, env(safe-area-inset-left, 0px));
+}
+.pr-safe {
+  padding-right: max(0.5rem, env(safe-area-inset-right, 0px));
 }
 .mb-safe {
-  margin-bottom: env(safe-area-inset-bottom, 0px);
+  margin-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+}
+.min-h-screen-dynamic {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+.h-screen-dynamic {
+  height: 100vh;
+  height: 100dvh;
+}
+.scroll-touch {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
 }
 .scrollbar-none {
   scrollbar-width: none;

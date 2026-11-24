@@ -54,7 +54,7 @@ for (const envPath of possibleEnvPaths) {
         const key = trimmed.slice(0, idx).trim();
         const val = trimmed.slice(idx + 1).trim();
         if (val) {
-          process.env[key] = val;
+          process.env[key] = val === "smtppro.zoho.in" ? "smtp.zoho.in" : val;
         }
       }
     }

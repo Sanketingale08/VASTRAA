@@ -5,7 +5,7 @@ import {
   TrendingUp, TrendingDown, IndianRupee, ShoppingBag, Users, Store,
   RotateCcw, Package, Download, FileSpreadsheet, FileText, Printer,
   BarChart2, RefreshCw, Copy, ChevronLeft, ChevronRight, Search,
-  Calendar, Filter, Sparkles, AlertCircle, ArrowUpRight
+  Calendar, Filter, Sparkles, AlertCircle, ArrowUpRight, Heart,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -1107,7 +1107,10 @@ function ProductTab({ period, from, to }: { period: Period; from: string; to: st
                 {mostWishlisted.slice(0, 5).map((p: any) => (
                   <div key={p.productId} className="flex items-center justify-between text-xs pb-1.5 border-b border-gray-100 last:border-0 last:pb-0">
                     <span className="font-semibold text-gray-700 truncate max-w-[140px]">{p.name || p.productId?.slice(0, 12)}</span>
-                    <span className="text-rose-600 font-bold shrink-0">{p.wishlistCount} ❤</span>
+                    <span className="text-rose-600 font-bold shrink-0 inline-flex items-center gap-1">
+                      {p.wishlistCount}
+                      <Heart size={12} className="fill-rose-600 text-rose-600 shrink-0" />
+                    </span>
                   </div>
                 ))}
               </div>

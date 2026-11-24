@@ -51,7 +51,10 @@ vi.mock("@workspace/db", () => {
     price: 8000,
     images: ["img1.jpg"],
     vendorName: "Silk Palace",
+    vendorId: "vendor-1",
     stock: 50,
+    status: "active",
+    approvalStatus: "approved",
   };
 
   /** Build a select chain that resolves rows based on the table's _t tag. */
@@ -83,6 +86,9 @@ vi.mock("@workspace/db", () => {
             rows = state.forceSameUser && state.redemptionRecorded
               ? [{ id: "redemption-existing" }]
               : [];
+            break;
+          case "vendors":
+            rows = [{ id: "vendor-1", status: "active", approvalStatus: "approved", ownerId: "owner-1" }];
             break;
           default:
             rows = [];
@@ -246,6 +252,45 @@ vi.mock("@workspace/db", () => {
     },
     vendorsTable: { _t: "vendors", id: "id", ownerId: "ownerId" },
     ADMIN_NOTIFICATION_USER_ID: "admin-notifications-user",
+    getNextSequenceValue: vi.fn(() => Promise.resolve(1001)),
+    isMongoDbConnected: vi.fn(() => false),
+    mongoGeneric: { getCollection: vi.fn() },
+    mongoCoupons: {
+      findMany: vi.fn(() => Promise.reject(new Error("fallback to db"))),
+      findById: vi.fn(() => Promise.reject(new Error("fallback to db"))),
+      findByCode: vi.fn(() => Promise.reject(new Error("fallback to db"))),
+      atomicIncrementUsage: vi.fn(async (id: string, maxUses: number | null) => {
+        if (maxUses !== null && state.couponUsedCount >= maxUses) return false;
+        state.couponUsedCount++;
+        return true;
+      }),
+    },
+    mongoOrders: {
+      findOne: vi.fn(() => Promise.resolve(null)),
+      findById: vi.fn(() => Promise.resolve(null)),
+      insert: vi.fn((data: any) => Promise.resolve({ id: `order-${++state.orderCounter}`, ...data })),
+      update: vi.fn(() => Promise.resolve(null)),
+    },
+    mongoProducts: {
+      findById: vi.fn((id: string) => Promise.resolve(id === PRODUCT.id ? PRODUCT : null)),
+      findMany: vi.fn(() => Promise.resolve([PRODUCT])),
+      decrementStock: vi.fn(() => Promise.resolve({ success: true, stock: 49 })),
+    },
+    mongoSupport: {},
+    mongoCart: {},
+    mongoShipments: {},
+    mongoVendors: {
+      findById: vi.fn(() => Promise.resolve({ id: "vendor-1", status: "active", approvalStatus: "approved" })),
+      findMany: vi.fn(() => Promise.resolve([{ id: "vendor-1", status: "active", approvalStatus: "approved" }])),
+    },
+    mongoSellers: {
+      findMany: vi.fn(() => Promise.resolve([{ id: "vendor-1", vendorId: "vendor-1", sellerId: "vendor-1", shopName: "Silk Palace", status: "approved" }])),
+      findById: vi.fn(() => Promise.resolve({ id: "vendor-1", vendorId: "vendor-1", sellerId: "vendor-1", shopName: "Silk Palace", status: "approved" })),
+    },
+    supportTicketsTable: { _t: "supportTickets", id: "id" },
+    vendorSettlementsTable: { _t: "vendorSettlements" },
+    savedPaymentMethodsTable: { _t: "savedPaymentMethods" },
+    adminLoginSessionsTable: { _t: "adminLoginSessions" },
   };
 });
 
@@ -278,7 +323,7 @@ const ORDER_BODY = {
     pincode: "560001",
   },
   deliveryMethod: "standard",
-  paymentMethod: "upi",
+  paymentMethod: "cod",
   couponCode: "LIMIT1",
 };
 

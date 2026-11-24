@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useLocation, Link } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSocket } from "@/context/SocketContext";
 import {
   LayoutDashboard, Users, Package, UserCircle, Settings,
   LogOut, Shield, Menu, X, RotateCcw, ShieldAlert, BadgePercent, HelpCircle, Bell, BarChart3,
@@ -9,6 +10,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 import { adminHeaders, adminKey, initAdmin2FAInterceptor } from '@/lib/adminApi';
+import { getOrCreateDeviceId, registerCurrentDevice } from '@/lib/deviceAuth';
 
 const NAVY = "#0A1F44";
 const NAVY2 = "#0B0C10";
@@ -95,8 +97,15 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
       return;
     }
     const sessionToken = sessionStorage.getItem("td_admin_session_token") ?? "";
-    const headers: Record<string, string> = { "x-admin-key": key };
+    const deviceId = getOrCreateDeviceId();
+    const headers: Record<string, string> = {
+      "x-admin-key": key,
+      "x-device-id": deviceId,
+    };
     if (sessionToken) headers["x-admin-session-token"] = sessionToken;
+
+    // Announce device identity to backend if not yet registered
+    registerCurrentDevice().catch(() => {});
 
     fetch(`/api/admin/vendors`, {
       headers,
@@ -108,12 +117,21 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
           // Session exists but 2FA verification is required — send to verify screen
           const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
           setLocation(`/admin/2fa-verify?returnTo=${returnTo}`);
+        } else if (
+          body.code === "DEVICE_UNAUTHORIZED" ||
+          body.code === "DEVICE_BLOCKED" ||
+          body.code === "DEVICE_REVOKED" ||
+          body.code === "DEVICE_CREDENTIAL_INVALID"
+        ) {
+          // Device is not authorized to access admin panel
+          const dId = body.deviceId || deviceId;
+          setLocation(`/admin/unauthorized-device?code=${encodeURIComponent(body.code)}&deviceId=${encodeURIComponent(dId)}`);
         } else if (body.code === "SESSION_REVOKED" || sessionToken) {
           // Stale/revoked session token attached to valid key — clear stale session token & retry with key only
           sessionStorage.removeItem("td_admin_session_token");
           sessionStorage.removeItem("td_admin_session_id");
           fetch(`/api/admin/vendors`, {
-            headers: { "x-admin-key": key },
+            headers: { "x-admin-key": key, "x-device-id": deviceId },
             credentials: "include",
           }).then((r2) => {
             if (r2.ok) setVerified(true);
@@ -152,6 +170,8 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [location, setLocation] = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const qc = useQueryClient();
+  const { socket } = useSocket();
 
   const { data: countData } = useQuery({
     queryKey: ["admin-notif-count"],
@@ -167,6 +187,36 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     staleTime: 30000,
   });
   const unread = countData?.count ?? 0;
+
+  // Real-time notification socket listener for immediate zero-latency bell updates
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleUnreadCount = (data: { count?: number }) => {
+      if (typeof data?.count === "number") {
+        qc.setQueryData(["admin-notif-count"], { count: data.count });
+      } else {
+        qc.invalidateQueries({ queryKey: ["admin-notif-count"] });
+      }
+    };
+
+    const handleAdminNotif = (data: { unreadCount?: number }) => {
+      if (typeof data?.unreadCount === "number") {
+        qc.setQueryData(["admin-notif-count"], { count: data.unreadCount });
+      } else {
+        qc.invalidateQueries({ queryKey: ["admin-notif-count"] });
+      }
+      qc.invalidateQueries({ queryKey: ["admin-notif-list"] });
+    };
+
+    socket.on("admin_unread_count", handleUnreadCount);
+    socket.on("admin_notification", handleAdminNotif);
+
+    return () => {
+      socket.off("admin_unread_count", handleUnreadCount);
+      socket.off("admin_notification", handleAdminNotif);
+    };
+  }, [socket, qc]);
 
   function signOut() {
     clearAdminSession();

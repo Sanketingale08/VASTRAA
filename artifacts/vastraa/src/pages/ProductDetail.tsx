@@ -391,7 +391,10 @@ function StarBar({
   const pct = total > 0 ? (count / total) * 100 : 0;
   return (
     <div className="flex items-center gap-2 text-xs">
-      <span className="w-5 text-right opacity-70 font-semibold">{stars}★</span>
+      <span className="w-6 text-right opacity-70 font-semibold inline-flex items-center justify-end gap-0.5">
+        {stars}
+        <Star size={10} className="fill-amber-400 text-amber-400 shrink-0" />
+      </span>
       <div className="flex-1 h-2 rounded-full overflow-hidden bg-[#C7CCD1]/40">
         <motion.div
           initial={{ width: 0 }}
@@ -1839,25 +1842,25 @@ export default function ProductDetail() {
         </div>
 
         {/* Sticky Mobile Purchase Action Bar */}
-        <div className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-[#C7CCD1]/30 px-4 py-2.5 pb-safe shadow-[0_-4px_16px_rgba(0,0,0,0.08)] flex items-center justify-between gap-3">
-          <div className="flex flex-col min-w-0">
-            <span className="text-[11px] uppercase tracking-wider text-gray-500 font-medium">Total Price</span>
-            <span className="font-serif text-lg font-bold text-[#0A1F44] truncate">
+        <div className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-[#C7CCD1]/30 px-3 sm:px-4 py-2.5 pb-safe shadow-[0_-4px_16px_rgba(0,0,0,0.08)] flex items-center justify-between gap-2 sm:gap-3">
+          <div className="flex flex-col min-w-0 pr-1">
+            <span className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">Price</span>
+            <span className="font-serif text-base sm:text-lg font-bold text-[#0A1F44] truncate">
               ₹{effectivePrice.toLocaleString("en-IN")}
             </span>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               onClick={() => toggle(id ?? "")}
               aria-label={isWishlisted ? "Remove from saved items" : "Save for later"}
               className={cn(
-                "p-2.5 rounded-lg border transition-all flex items-center justify-center min-w-[44px] min-h-[44px]",
+                "p-2 rounded-lg border transition-all flex items-center justify-center min-w-[38px] min-h-[42px]",
                 isWishlisted
                   ? "bg-[#0A1F44] border-[#0A1F44] text-white"
                   : "border-[#C7CCD1] text-[#0A1F44] hover:bg-[#0A1F44]/5"
               )}
             >
-              <Heart size={20} className={isWishlisted ? "fill-current" : ""} />
+              <Heart size={18} className={isWishlisted ? "fill-current" : ""} />
             </button>
             <button
               onClick={() => {
@@ -1878,7 +1881,7 @@ export default function ProductDetail() {
               }}
               disabled={!canPurchase}
               className={cn(
-                "flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg font-bold uppercase tracking-wider text-xs transition-all shadow-md min-h-[44px]",
+                "flex items-center justify-center gap-1.5 py-2.5 px-3 sm:px-4 rounded-lg font-bold uppercase tracking-wider text-xs transition-all shadow-md min-h-[42px]",
                 !canPurchase
                   ? "bg-gray-300 text-gray-500 cursor-not-allowed"
                   : addedToCart
@@ -1886,14 +1889,44 @@ export default function ProductDetail() {
                   : "bg-[#0A1F44] text-white hover:bg-[#2C3E6B] active:scale-95"
               )}
             >
-              <ShoppingBag size={16} />
+              <ShoppingBag size={14} />
               {variantRequired
-                ? "Select Options"
+                ? "Options"
                 : isOutOfStock
-                ? "Out of Stock"
+                ? "Sold Out"
                 : addedToCart
                 ? "Added!"
                 : "Add to Bag"}
+            </button>
+            <button
+              onClick={() => {
+                if (!canPurchase) return;
+                try {
+                  sessionStorage.setItem(
+                    BUY_NOW_KEY,
+                    JSON.stringify({
+                      productId: product.id,
+                      quantity: 1,
+                      product: {
+                        id: product.id,
+                        productId: product.id,
+                        name: product.name,
+                        price: effectivePrice,
+                        originalPrice: product.originalPrice ?? null,
+                        images: product.images ?? [],
+                        vendorName: product.vendorName ?? "",
+                        stock: effectiveStock,
+                        category: product.category ?? "",
+                      },
+                    })
+                  );
+                } catch {}
+                setLocation("/checkout");
+              }}
+              disabled={!canPurchase}
+              className="py-2.5 px-3 sm:px-4 rounded-lg font-bold uppercase tracking-wider text-xs border border-[#0A1F44] text-[#0A1F44] bg-white hover:bg-gray-50 active:scale-95 shadow-xs min-h-[42px] disabled:opacity-40"
+            >
+              Buy Now
             </button>
           </div>
         </div>

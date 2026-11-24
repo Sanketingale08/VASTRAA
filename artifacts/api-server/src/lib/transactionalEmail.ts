@@ -19,6 +19,7 @@ import {
   mongoSiteSettings,
   siteSettingsTable,
   isMongoDbConnected,
+  ADMIN_NOTIFICATION_USER_ID,
 } from "@workspace/db";
 import { eq, and, or, lte, lt, inArray, isNull } from "drizzle-orm";
 import { logger } from "./logger";
@@ -2577,6 +2578,83 @@ export async function sendAccountSecurityAlertEmail(opts: {
   };
 }
 
+export interface SendAdminAlertEmailOptions {
+  toEmail: string;
+  category: string;
+  title: string;
+  body: string;
+  metadata?: Record<string, any>;
+}
+
+/**
+ * Sends a rich, branded email alert to the admin for critical platform events
+ * honoring admin notification preferences.
+ */
+export async function sendAdminAlertEmail(
+  opts: SendAdminAlertEmailOptions
+): Promise<SendTransactionalEmailResult> {
+  const { toEmail, category, title, body, metadata } = opts;
+  const categoryLabel = (category || "admin_alert").replace(/_/g, " ").toUpperCase();
+  const timestamp = new Date().toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+
+  let metaRows = "";
+  if (metadata && typeof metadata === "object") {
+    metaRows = Object.entries(metadata)
+      .filter(([_, v]) => v !== undefined && v !== null && typeof v !== "object")
+      .map(
+        ([k, v]) =>
+          `<tr><td style="padding: 7px 12px; font-weight: 600; color: #4B5563; font-size: 13px; border-bottom: 1px solid #E5E7EB; text-transform: capitalize;">${k.replace(
+            /([A-Z])/g,
+            " $1"
+          )}</td><td style="padding: 7px 12px; color: #111827; font-size: 13px; border-bottom: 1px solid #E5E7EB; font-family: monospace;">${String(
+            v
+          )}</td></tr>`
+      )
+      .join("");
+  }
+
+  const html = `
+    <div style="background: #0A1F44; color: #FFFFFF; padding: 24px; border-radius: 8px 8px 0 0; border-bottom: 3px solid #D4AF37;">
+      <span style="background: #D4AF37; color: #0A1F44; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; padding: 3px 8px; border-radius: 4px; display: inline-block; margin-bottom: 10px;">${categoryLabel}</span>
+      <h2 style="margin: 0 0 6px 0; color: #FFFFFF; font-family: Georgia, serif; font-size: 20px; font-weight: bold;">${title}</h2>
+      <p style="margin: 0; color: #C7CCD1; font-size: 12px;">Triggered on ${timestamp} IST</p>
+    </div>
+    <div style="padding: 24px; background: #FFFFFF; border: 1px solid #E5E7EB; border-top: none; border-radius: 0 0 8px 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+      <p style="color: #374151; font-size: 14px; line-height: 1.6; margin-top: 0;">${body}</p>
+      ${
+        metaRows
+          ? `
+        <div style="margin-top: 20px; margin-bottom: 20px;">
+          <h4 style="font-size: 11px; text-transform: uppercase; color: #6B7280; letter-spacing: 0.5px; margin: 0 0 8px 0; font-weight: bold;">Event Details</h4>
+          <table style="width: 100%; border-collapse: collapse; background: #F9FAFB; border-radius: 6px; overflow: hidden; border: 1px solid #E5E7EB;">
+            <tbody>${metaRows}</tbody>
+          </table>
+        </div>
+      `
+          : ""
+      }
+      <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #F3F4F6;">
+        <a href="https://vastraa.com/admin/notifications" style="background: #0A1F44; color: #FFFFFF; text-decoration: none; padding: 10px 20px; border-radius: 6px; font-size: 13px; font-weight: 600; display: inline-block;">Open Admin Notification Center &rarr;</a>
+      </div>
+      <p style="margin: 16px 0 0 0; color: #9CA3AF; font-size: 11px;">
+        You received this email because Admin Notifications for <strong>${categoryLabel}</strong> are enabled in your VASTRAA Admin Panel preferences.
+      </p>
+    </div>
+  `;
+
+  return sendTransactionalEmail({
+    userId: ADMIN_NOTIFICATION_USER_ID,
+    toEmail: toEmail.trim().toLowerCase(),
+    type: `admin_${category}` as any,
+    subject: `[VASTRAA Alert] ${title}`,
+    customHtml: html,
+  });
+}
+
 export interface SendSellerNewOrderEmailOptions {
   vendorId: string;
   orderId: string;
@@ -3904,5 +3982,13 @@ export async function sendAdmin2faOtpEmail(opts: {
     delivered: false,
     error: "Failed to deliver verification code. Please verify your SMTP / email configuration.",
   };
+}
+
+export async function sendAdminProfileOtpEmail(opts: {
+  toEmail: string;
+  otp: string;
+  name?: string;
+}): Promise<{ delivered: boolean; error?: string }> {
+  return sendAdmin2faOtpEmail(opts);
 }
 

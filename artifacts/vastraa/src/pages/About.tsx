@@ -171,7 +171,7 @@ export default function About() {
                   variants={fadeUp}
                 >
                   <p className="font-serif text-3xl md:text-4xl font-bold text-[#0A1F44]">{s.value}</p>
-                  <p className="text-xs md:text-sm uppercase tracking-wider text-[#7a5f4e] mt-1">{s.label}</p>
+                  <p className="text-xs md:text-sm uppercase tracking-wider text-slate-600 mt-1">{s.label}</p>
                 </motion.div>
               ))}
             </div>
@@ -192,10 +192,10 @@ export default function About() {
               <h2 className="font-serif text-3xl md:text-4xl text-[#0A1F44] font-bold mb-5">
                 {content.storyHeadline}
               </h2>
-              <p className="text-[#7a5f4e] text-sm md:text-base leading-relaxed mb-4">
+              <p className="text-slate-600 text-sm md:text-base leading-relaxed mb-4">
                 {content.storyParagraph1}
               </p>
-              <p className="text-[#7a5f4e] text-sm md:text-base leading-relaxed">
+              <p className="text-slate-600 text-sm md:text-base leading-relaxed">
                 {content.storyParagraph2}
               </p>
             </motion.div>
@@ -298,7 +298,7 @@ export default function About() {
           </div>
         </section>
 
-        {/* ── Why Shop With TwirlDrape ─────────────────────────── */}
+        {/* ── Why Shop With VASTRAA ─────────────────────────── */}
         <section className="bg-white py-16 md:py-24">
           <div className="container mx-auto px-4">
             <SectionTitle subtitle="Your trust is our highest priority at every step">
@@ -317,8 +317,8 @@ export default function About() {
                 >
                   <div className="p-3 rounded-xl" style={{ background: MAROON + "15" }}>{TRUST_BADGE_ICONS[i]}</div>
                   <div>
-                    <h4 className="font-serif text-lg font-semibold mb-1" style={{ color: MAROON }}>{f.title}</h4>
-                    <p className="text-sm text-[#7a5f4e] leading-relaxed">{f.desc}</p>
+                    <h3 className="font-serif text-lg font-semibold mb-1" style={{ color: MAROON }}>{f.title}</h3>
+                    <p className="text-sm text-slate-600 leading-relaxed">{f.desc}</p>
                   </div>
                 </motion.div>
               ))}
@@ -347,7 +347,7 @@ export default function About() {
                     {MISSION_VALUE_ICONS[i]}
                   </div>
                   <h3 className="font-semibold text-[#0A1F44] text-base mb-2">{v.title}</h3>
-                  <p className="text-sm text-[#7a5f4e] leading-relaxed">{v.desc}</p>
+                  <p className="text-sm text-slate-600 leading-relaxed">{v.desc}</p>
                 </motion.div>
               ))}
             </div>
@@ -382,10 +382,10 @@ export default function About() {
               <h2 className="font-serif text-3xl md:text-4xl text-[#0A1F44] font-bold mb-5">
                 {content.weaversHeadline}
               </h2>
-              <p className="text-[#7a5f4e] text-sm md:text-base leading-relaxed mb-4">
+              <p className="text-slate-600 text-sm md:text-base leading-relaxed mb-4">
                 {content.weaversParagraph1}
               </p>
-              <p className="text-[#7a5f4e] text-sm md:text-base leading-relaxed">
+              <p className="text-slate-600 text-sm md:text-base leading-relaxed">
                 {content.weaversParagraph2}
               </p>
             </motion.div>
@@ -415,7 +415,7 @@ export default function About() {
                 />
                 <h3 className="font-semibold text-[#0A1F44] text-base">{member.name}</h3>
                 <p className="text-xs font-bold uppercase tracking-wider text-[#C7CCD1] mb-3">{member.role}</p>
-                <p className="text-sm text-[#7a5f4e] leading-relaxed">{member.bio}</p>
+                <p className="text-sm text-slate-600 leading-relaxed">{member.bio}</p>
               </motion.div>
             ))}
           </div>
@@ -433,7 +433,7 @@ export default function About() {
               <h2 className="font-serif text-2xl md:text-3xl text-[#0A1F44] font-bold mb-4">
                 {content.ctaHeadline}
               </h2>
-              <p className="text-[#7a5f4e] mb-8 max-w-lg mx-auto text-sm md:text-base">
+              <p className="text-slate-600 mb-8 max-w-lg mx-auto text-sm md:text-base">
                 {content.ctaSubtext}
               </p>
               <Link
@@ -460,7 +460,7 @@ export default function About() {
                       rel="noopener noreferrer"
                       aria-label={`VASTRAA on ${s.label}`}
                       title={s.label}
-                      className={`w-11 h-11 rounded-full border border-[#C7CCD1]/30 bg-white flex items-center justify-center text-[#7a5f4e] ${s.hover} hover:border-[#C7CCD1] hover:shadow-md transition-all duration-300`}
+                      className={`w-11 h-11 rounded-full border border-[#C7CCD1]/30 bg-white flex items-center justify-center text-slate-600 ${s.hover} hover:border-[#C7CCD1] hover:shadow-md transition-all duration-300`}
                     >
                       {s.icon}
                     </a>

@@ -18,7 +18,8 @@ import {
   ChevronRight,
   Filter,
   Layers,
-  ArrowRight
+  ArrowRight,
+  X,
 } from "lucide-react";
 import { SellerLayout } from "./SellerDashboard";
 import { apiFetch } from "@/lib/api";
@@ -491,8 +492,9 @@ export default function SellerReturns() {
                   <button
                     onClick={() => setSelectedReturn(null)}
                     className="p-1 rounded-full text-white/70 hover:text-white hover:bg-white/10"
+                    aria-label="Close"
                   >
-                    ✕
+                    <X size={16} />
                   </button>
                 </div>
 
@@ -714,8 +716,9 @@ export default function SellerReturns() {
                 <button
                   onClick={() => setPreviewPhoto(null)}
                   className="absolute top-4 right-4 bg-black/60 text-white p-2 rounded-full hover:bg-black"
+                  aria-label="Close preview"
                 >
-                  ✕
+                  <X size={18} />
                 </button>
               </div>
             </div>

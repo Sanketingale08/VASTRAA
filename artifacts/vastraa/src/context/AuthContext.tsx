@@ -161,7 +161,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const res = await apiFetch("/api/auth/sign-in", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), password }),
+        body: JSON.stringify({ email: email.trim(), identifier: email.trim(), password }),
       });
 
       let data: any = {};
@@ -184,6 +184,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (data.token) {
         localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+      }
+      if (data.user) {
+        const nameParts = (data.user.name || "").split(" ");
+        setUser({
+          ...data.user,
+          firstName: data.user.firstName || nameParts[0] || data.user.name || "Customer",
+          lastName: data.user.lastName || nameParts.slice(1).join(" ") || "",
+        });
       }
       await loadUser();
       setIsLoading(false);
@@ -225,6 +233,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (data.token) {
         localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+        if (data.user) {
+          const nameParts = (data.user.name || "").split(" ");
+          setUser({
+            ...data.user,
+            firstName: data.user.firstName || nameParts[0] || data.user.name || "Customer",
+            lastName: data.user.lastName || nameParts.slice(1).join(" ") || "",
+          });
+        }
         await loadUser();
       }
       setIsLoading(false);

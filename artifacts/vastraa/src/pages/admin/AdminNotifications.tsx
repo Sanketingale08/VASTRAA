@@ -5,12 +5,13 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Bell, Trash2, CheckCheck, CheckCircle, Search, UserPlus, FileCheck,
   FileClock, IndianRupee, MessageSquareWarning, ServerCrash, Wallet, CreditCard, Circle, ExternalLink, RefreshCw,
-  Mail, AlertTriangle, RotateCcw, ChevronLeft, ChevronRight, X,
+  Mail, AlertTriangle, RotateCcw, ChevronLeft, ChevronRight, X, Settings, Sliders,
 } from "lucide-react";
 import AdminLayout, { AdminGuard } from "./AdminLayout";
 import { cn } from "@/lib/utils";
 import { AdminErrorBoundary, AdminErrorState, AdminEmptyState, getFriendlyErrorMessage } from "@/components/admin/AdminErrorHandling";
 import { adminHeaders } from '@/lib/adminApi';
+import { AdminNotificationPrefs } from "@/components/admin/AdminNotificationPrefs";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 const NAVY = "#0D1B36";
@@ -307,6 +308,7 @@ function EmailOutboxSection() {
 }
 
 function AdminNotificationsContent() {
+  const [activeView, setActiveView] = useState<"inbox" | "preferences" | "outbox">("inbox");
   const [activeTab, setActiveTab] = useState("all");
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -676,7 +678,50 @@ function AdminNotificationsContent() {
         )}
       </AnimatePresence>
 
-      {/* Filters and Search */}
+      {/* View Switcher Tabs */}
+      <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
+        <button
+          onClick={() => setActiveView("inbox")}
+          className={cn(
+            "px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer",
+            activeView === "inbox" ? "bg-[#0A1F44] text-white shadow-xs" : "text-gray-600 hover:bg-gray-100"
+          )}
+        >
+          <Bell size={13} />
+          <span>Notifications</span>
+          {hasUnread && (
+            <span className="w-2 h-2 rounded-full bg-red-400 inline-block" />
+          )}
+        </button>
+        <button
+          onClick={() => setActiveView("preferences")}
+          className={cn(
+            "px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer",
+            activeView === "preferences" ? "bg-[#0A1F44] text-white shadow-xs" : "text-gray-600 hover:bg-gray-100"
+          )}
+        >
+          <Sliders size={13} />
+          <span>Notification Preferences</span>
+        </button>
+        <button
+          onClick={() => setActiveView("outbox")}
+          className={cn(
+            "px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer",
+            activeView === "outbox" ? "bg-[#0A1F44] text-white shadow-xs" : "text-gray-600 hover:bg-gray-100"
+          )}
+        >
+          <Mail size={13} />
+          <span>Email Outbox</span>
+        </button>
+      </div>
+
+      {activeView === "preferences" ? (
+        <AdminNotificationPrefs />
+      ) : activeView === "outbox" ? (
+        <EmailOutboxSection />
+      ) : (
+        <>
+          {/* Filters and Search */}
       <div className="flex flex-wrap gap-3 items-center">
         <div className="flex gap-1 p-1 rounded-xl w-fit flex-wrap" style={{ background: CREAM }}>
           {TYPE_FILTERS.map(({ key, label }) => (
@@ -911,6 +956,8 @@ function AdminNotificationsContent() {
       <div className="pt-4 border-t border-gray-100">
         <EmailOutboxSection />
       </div>
+        </>
+      )}
     </div>
   );
 }

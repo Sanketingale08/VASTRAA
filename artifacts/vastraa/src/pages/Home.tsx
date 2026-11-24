@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
@@ -19,10 +19,11 @@ import { Layout } from "@/components/Layout";
 import { ProductCard } from "@/components/ProductCard";
 import { ProductCardSkeleton } from "@/components/skeletons";
 import { ProductSection } from "@/components/ProductSection";
-import { QuickViewModal } from "@/components/QuickViewModal";
+const QuickViewModal = lazy(() => import("@/components/QuickViewModal").then(m => ({ default: m.QuickViewModal })));
 import { useListProducts, getListProductsQueryKey } from "@workspace/api-client-react";
 import { PriceRangeCards } from "@/components/PriceRangeCards";
 import { BUDGET_RANGES, getBudgetById, getBudgetByPrice } from "@/constants/budget";
+import { DualProductShowcase } from "@/components/DualProductShowcase";
 import { AdvertisementCarousel } from "@/components/AdvertisementCarousel";
 import type { ProductSummary } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
@@ -247,7 +248,10 @@ function RecentlyViewedSection({ onQuickView }: { onQuickView: (p: ProductSummar
             <Clock className="w-3.5 h-3.5 text-[#0A1F44] dark:text-[#D4AF37]" />
             <span>{hasIds ? "Your Browsing History" : "Featured For You"}</span>
             {hasIds && allViewedProducts.length > 0 && (
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 motion-safe:animate-ping" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+              </span>
             )}
           </div>
 
@@ -412,16 +416,13 @@ function SareeCategoriesShowcaseSection() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8">
         <h1 className="sr-only">Explore by Category</h1>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3.5 sm:gap-4 md:gap-5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-7 gap-3 sm:gap-4 md:gap-5">
           {displayCategories.map((cat, idx) => {
             const href = `/${cat.slug}`;
             return (
-              <motion.div
+              <div
                 key={cat.id || cat.slug}
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.35, delay: idx * 0.05 }}
+                className="transform-gpu"
               >
                 <Link
                   href={href}
@@ -430,8 +431,11 @@ function SareeCategoriesShowcaseSection() {
                   <div className="relative aspect-[4/5] w-full rounded-xl overflow-hidden bg-gray-100 mb-3 shadow-2xs">
                     <img
                       src={getProductImageSrc(cat.image, cat.imageUpdatedAt || cat.imageVersion)}
-                      alt={cat.name}
+                      alt={`Handcrafted collection of ${cat.name}`}
                       onError={replaceProductImageWithFallback}
+                      loading={idx < 4 ? "eager" : "lazy"}
+                      decoding={idx < 2 ? "sync" : "async"}
+                      {...(idx === 0 ? { fetchPriority: "high" } : {})}
                       className="w-full h-full object-cover object-top group-hover:scale-108 transition-transform duration-500"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-40 group-hover:opacity-20 transition-opacity" />
@@ -441,11 +445,11 @@ function SareeCategoriesShowcaseSection() {
                       </span>
                     )}
                   </div>
-                  <h3 className="font-serif text-xs sm:text-sm md:text-base font-bold text-[#0A1F44] group-hover:text-[#2C3E6B] transition-colors line-clamp-1">
+                  <h2 className="font-serif text-xs sm:text-sm md:text-base font-bold text-[#0A1F44] group-hover:text-[#2C3E6B] transition-colors line-clamp-1">
                     {cat.name}
-                  </h3>
+                  </h2>
                 </Link>
-              </motion.div>
+              </div>
             );
           })}
         </div>
@@ -487,7 +491,7 @@ export default function Home() {
       {/* ── 2. SHOP BY BUDGET ── */}
       <section className="max-w-7xl mx-auto px-4 md:px-8 my-12" aria-labelledby="shop-by-budget-heading">
         <div className="mb-6">
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#C7CCD1]">SHOP BY BUDGET</p>
+          <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-600 dark:text-slate-300">SHOP BY BUDGET</p>
           <h2 id="shop-by-budget-heading" className="font-serif text-2xl md:text-3xl font-bold text-[#0A1F44]">
             Explore Collections by Price
           </h2>
@@ -499,6 +503,9 @@ export default function Home() {
           onSelect={handleBudgetSelect}
         />
       </section>
+
+      {/* ── 3. NEW ARRIVALS & BESTSELLING PRODUCTS ── */}
+      <DualProductShowcase onQuickView={setQuickViewProduct} />
 
       {/* ── ADVERTISEMENT SCROLLING WINDOW ── */}
       <AdvertisementCarousel autoPlayIntervalMs={6000} />
@@ -536,11 +543,15 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ── QUICK VIEW MODAL ── */}
-      <QuickViewModal
-        product={quickViewProduct}
-        onClose={() => setQuickViewProduct(null)}
-      />
+      {/* ── QUICK VIEW MODAL (LAZY LOADED) ── */}
+      {quickViewProduct && (
+        <Suspense fallback={null}>
+          <QuickViewModal
+            product={quickViewProduct}
+            onClose={() => setQuickViewProduct(null)}
+          />
+        </Suspense>
+      )}
     </Layout>
   );
 }

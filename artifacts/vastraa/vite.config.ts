@@ -23,6 +23,25 @@ function patchFsMethod(obj: any, name: string) {
     }
   };
   wrapped.__isPatched = true;
+  if (typeof orig.native === "function") {
+    wrapped.native = function (this: any, ...args: any[]) {
+      try {
+        return orig.native.apply(this, args);
+      } catch (e: any) {
+        if (e && (e.code === "EPERM" || e.code === "EACCES")) {
+          return args[0];
+        }
+        throw e;
+      }
+    };
+  }
+  for (const prop of Object.keys(orig)) {
+    if (!(prop in wrapped)) {
+      try {
+        wrapped[prop] = orig[prop];
+      } catch (_) {}
+    }
+  }
   obj[name] = wrapped;
 }
 patchFsMethod(fs, "realpathSync");
@@ -79,15 +98,23 @@ export default defineConfig(async ({ mode }) => {
       output: {
         manualChunks(id) {
           if (id.includes("node_modules")) {
-            // Group core runtime and auth libraries into vendor-core to prevent circular chunk dependencies
+            // Group core runtime and auth libraries into vendor-core (Clerk belongs with React to avoid circular chunks)
             if (
               id.includes("react/") ||
               id.includes("react-dom/") ||
               id.includes("wouter") ||
-              id.includes("@tanstack") ||
               id.includes("@clerk")
             ) {
               return "vendor-core";
+            }
+            if (id.includes("@tanstack")) {
+              return "vendor-query";
+            }
+            if (id.includes("framer-motion")) {
+              return "vendor-motion";
+            }
+            if (id.includes("lucide-react")) {
+              return "vendor-icons";
             }
             if (id.includes("recharts") || id.includes("d3-")) {
               return "vendor-charts";
@@ -95,7 +122,7 @@ export default defineConfig(async ({ mode }) => {
             if (id.includes("jspdf") || id.includes("xlsx") || id.includes("html2canvas") || id.includes("canvg")) {
               return "vendor-documents";
             }
-            if (id.includes("lucide-react") || id.includes("@radix-ui") || id.includes("framer-motion")) {
+            if (id.includes("@radix-ui")) {
               return "vendor-ui";
             }
             if (id.includes("@uppy")) {

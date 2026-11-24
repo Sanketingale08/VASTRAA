@@ -47,10 +47,10 @@ describe("IntroScreen Component", () => {
     const logoWrapper = logoImg.closest("div");
     expect(logoWrapper).toHaveClass("bg-white");
 
-    // Title and Paithani branding should be visible
-    expect(screen.getByRole("heading", { name: /vastraa/i })).toBeInTheDocument();
-    expect(screen.getByText(/royal paithani & designer sarees/i)).toBeInTheDocument();
-    expect(screen.getByText(/master weavers of india/i)).toBeInTheDocument();
+    // Brand name text, headings, and extra branding MUST NOT be present on the cover loading screen
+    expect(screen.queryByRole("heading", { name: /vastraa/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/royal paithani & designer sarees/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/master weavers of india/i)).not.toBeInTheDocument();
 
     // Progress bar should be present
     expect(screen.getByTestId("vastraa-intro-progress")).toBeInTheDocument();

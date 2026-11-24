@@ -4,12 +4,14 @@
  * so all admin pages work correctly when 2FA is enabled.
  */
 
+import { getOrCreateDeviceId, getDeviceName, getDeviceAuthHeaders } from "./deviceAuth";
+
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 /**
- * Install a one-time global fetch interceptor that redirects to the 2FA
- * verify screen whenever any /api/admin/* response comes back with
- * status 403 and code "2FA_REQUIRED".
+ * Install a one-time global fetch interceptor that redirects to:
+ * - /admin/2fa-verify when response is 403 and code is "2FA_REQUIRED"
+ * - /admin/unauthorized-device when response is 403 and code is "DEVICE_UNAUTHORIZED", "DEVICE_BLOCKED", or "DEVICE_REVOKED"
  *
  * Safe to call multiple times — patches window.fetch at most once.
  */
@@ -27,7 +29,7 @@ export function initAdmin2FAInterceptor(): void {
 
     // Only inspect admin API responses
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
-    if (res.status === 403 && url.includes("/api/admin/")) {
+    if (res.status === 403 && url.includes("/api/admin/") && !url.includes("/api/admin/devices/check") && !url.includes("/api/admin/devices/register")) {
       // Clone so the caller can still read the body if needed
       const clone = res.clone();
       try {
@@ -35,7 +37,15 @@ export function initAdmin2FAInterceptor(): void {
         if (body?.code === "2FA_REQUIRED") {
           const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
           window.location.href = `${BASE}/admin/2fa-verify?returnTo=${returnTo}`;
-          // Block callers from processing a partial result
+          return new Promise<Response>(() => {});
+        } else if (
+          body?.code === "DEVICE_UNAUTHORIZED" ||
+          body?.code === "DEVICE_BLOCKED" ||
+          body?.code === "DEVICE_REVOKED" ||
+          body?.code === "DEVICE_CREDENTIAL_INVALID"
+        ) {
+          const deviceId = body?.deviceId || getOrCreateDeviceId();
+          window.location.href = `${BASE}/admin/unauthorized-device?code=${encodeURIComponent(body?.code)}&deviceId=${encodeURIComponent(deviceId)}`;
           return new Promise<Response>(() => {});
         }
       } catch {
@@ -58,17 +68,29 @@ export function adminSessionToken(): string {
   return sessionStorage.getItem("td_admin_session_token") || localStorage.getItem("td_admin_session_token") || "";
 }
 
+export function adminAuthToken(): string {
+  if (typeof window === "undefined") return "";
+  const token = sessionStorage.getItem("admin_token") || localStorage.getItem("admin_token") || localStorage.getItem("td_admin_token") || "";
+  return token && token.trim() ? token.trim() : "";
+}
+
 /**
- * Returns authentication headers only (x-admin-key and session token),
+ * Returns authentication headers only (x-admin-key, Authorization bearer token and session token),
  * without setting Content-Type so browsers can correctly set multipart boundaries on FormData.
  */
 export function adminAuthHeaders(extra?: Record<string, string>): Record<string, string> {
   const h: Record<string, string> = {
     "x-admin-key": adminKey(),
+    "x-device-id": getOrCreateDeviceId(),
+    "x-device-name": getDeviceName(),
     ...(extra ?? {}),
   };
   const token = adminSessionToken();
   if (token) h["x-admin-session-token"] = token;
+  const authToken = adminAuthToken();
+  if (authToken && !h["Authorization"] && !h["authorization"]) {
+    h["Authorization"] = `Bearer ${authToken}`;
+  }
   return h;
 }
 
@@ -76,10 +98,16 @@ export function adminAuthHeaders(extra?: Record<string, string>): Record<string,
 export function adminHeaders(extra?: Record<string, string | undefined>): Record<string, string> {
   const h: Record<string, string> = {
     "x-admin-key": adminKey(),
+    "x-device-id": getOrCreateDeviceId(),
+    "x-device-name": getDeviceName(),
     "Content-Type": "application/json",
   };
   const token = adminSessionToken();
   if (token) h["x-admin-session-token"] = token;
+  const authToken = adminAuthToken();
+  if (authToken && !h["Authorization"] && !h["authorization"]) {
+    h["Authorization"] = `Bearer ${authToken}`;
+  }
   if (extra) {
     for (const [k, v] of Object.entries(extra)) {
       if (v === undefined || v === null) {
@@ -94,18 +122,40 @@ export function adminHeaders(extra?: Record<string, string | undefined>): Record
 
 /** Fetch wrapper that always includes admin credentials. Throws on non-OK.
  *  Automatically redirects to /admin/2fa-verify when the server returns 2FA_REQUIRED.
+ *  Automatically redirects to /admin/unauthorized-device when device access is unauthorized/blocked.
  */
 export async function adminFetch(path: string, opts: RequestInit = {}): Promise<any> {
-  const headers = adminHeaders(opts.headers as Record<string, string> | undefined ?? undefined);
+  let devHeaders: Record<string, string> = {};
+  try {
+    devHeaders = await getDeviceAuthHeaders();
+  } catch {
+    devHeaders = { "x-device-id": getOrCreateDeviceId(), "x-device-name": getDeviceName() };
+  }
+
+  const baseHeaders = adminHeaders(opts.headers as Record<string, string> | undefined ?? undefined);
+  const headers = { ...baseHeaders, ...devHeaders };
+
   const r = await fetch(path, { ...opts, credentials: "include", headers });
   if (!r.ok) {
     const body = await r.json().catch(() => ({}));
-    // Intercept 2FA_REQUIRED globally — redirect to verify screen with returnTo
-    if (r.status === 403 && body.code === "2FA_REQUIRED" && typeof window !== "undefined") {
-      const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
-      window.location.href = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/admin/2fa-verify?returnTo=${returnTo}`;
-      // Return a never-resolving promise so callers don't process a partial result
-      return new Promise(() => {});
+    if (r.status === 403 && typeof window !== "undefined") {
+      // Intercept 2FA_REQUIRED globally — redirect to verify screen with returnTo
+      if (body.code === "2FA_REQUIRED") {
+        const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
+        window.location.href = `${BASE}/admin/2fa-verify?returnTo=${returnTo}`;
+        return new Promise(() => {});
+      }
+      // Intercept Device Authorization errors globally
+      if (
+        body.code === "DEVICE_UNAUTHORIZED" ||
+        body.code === "DEVICE_BLOCKED" ||
+        body.code === "DEVICE_REVOKED" ||
+        body.code === "DEVICE_CREDENTIAL_INVALID"
+      ) {
+        const deviceId = body.deviceId || getOrCreateDeviceId();
+        window.location.href = `${BASE}/admin/unauthorized-device?code=${encodeURIComponent(body.code)}&deviceId=${encodeURIComponent(deviceId)}`;
+        return new Promise(() => {});
+      }
     }
     const err: any = new Error(body.error ?? `HTTP ${r.status}`);
     err.code = body.code;

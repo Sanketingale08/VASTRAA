@@ -130,7 +130,7 @@ async function authenticateOrRegisterGoogleUser(
   // 4. Role determination & Dashboard Redirection:
   // Derived strictly from verified server-side database records, NEVER from client params!
   let effectiveRole: UserRole = "customer";
-  let redirectUrl = opts.returnTo || "/account/overview";
+  let redirectUrl = (opts.returnTo && opts.returnTo !== "/account/overview") ? opts.returnTo : "/";
 
   if (user.role === "seller") {
     // Verify whether this seller account has an approved vendor profile in the database
@@ -191,7 +191,7 @@ async function authenticateOrRegisterGoogleUser(
       // Redirect to seller onboarding (registration) page, maintaining customer role
       redirectUrl = "/seller/register";
     } else {
-      redirectUrl = opts.returnTo || "/account/overview";
+      redirectUrl = (opts.returnTo && opts.returnTo !== "/account/overview") ? opts.returnTo : "/";
     }
   }
 

@@ -53,25 +53,33 @@ if (typeof window !== "undefined") {
   });
 
   // 3. Monkey-patch pushState & replaceState to ensure every history entry gets a unique __scrollKey
-  const originalPushState = window.history.pushState;
-  window.history.pushState = function (state, title, url) {
-    const newState = state && typeof state === "object" ? { ...state } : {};
-    if (!newState.__scrollKey) {
-      newState.__scrollKey = Math.random().toString(36).substring(2, 9) + "-" + Date.now();
-    }
-    return originalPushState.call(this, newState, title, url);
-  };
+  if (!(window.history.pushState as any).__scrollPatched) {
+    const originalPushState = window.history.pushState;
+    const patchedPushState = function (this: any, state: any, title: any, url: any) {
+      const newState = state && typeof state === "object" ? { ...state } : {};
+      if (!newState.__scrollKey) {
+        newState.__scrollKey = Math.random().toString(36).substring(2, 9) + "-" + Date.now();
+      }
+      return originalPushState.call(this, newState, title, url);
+    };
+    (patchedPushState as any).__scrollPatched = true;
+    window.history.pushState = patchedPushState;
+  }
 
-  const originalReplaceState = window.history.replaceState;
-  window.history.replaceState = function (state, title, url) {
-    const newState = state && typeof state === "object" ? { ...state } : {};
-    if (!newState.__scrollKey) {
-      newState.__scrollKey =
-        window.history.state?.__scrollKey ||
-        Math.random().toString(36).substring(2, 9) + "-" + Date.now();
-    }
-    return originalReplaceState.call(this, newState, title, url);
-  };
+  if (!(window.history.replaceState as any).__scrollPatched) {
+    const originalReplaceState = window.history.replaceState;
+    const patchedReplaceState = function (this: any, state: any, title: any, url: any) {
+      const newState = state && typeof state === "object" ? { ...state } : {};
+      if (!newState.__scrollKey) {
+        newState.__scrollKey =
+          window.history.state?.__scrollKey ||
+          Math.random().toString(36).substring(2, 9) + "-" + Date.now();
+      }
+      return originalReplaceState.call(this, newState, title, url);
+    };
+    (patchedReplaceState as any).__scrollPatched = true;
+    window.history.replaceState = patchedReplaceState;
+  }
 
   // Ensure current history entry has a __scrollKey on initial load
   if (!window.history.state || typeof window.history.state !== "object" || !window.history.state.__scrollKey) {

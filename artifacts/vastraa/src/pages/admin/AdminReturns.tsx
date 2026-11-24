@@ -7,7 +7,9 @@ import {
   FileText,
   Clock,
   CheckCircle2,
+  CheckCircle,
   XCircle,
+  X,
   Truck,
   Eye,
   AlertCircle,
@@ -934,8 +936,9 @@ export function AdminReturnsDashboard() {
                 <button
                   onClick={() => setSelectedReturn(null)}
                   className="p-1 rounded-full text-white/70 hover:text-white hover:bg-white/10"
+                  aria-label="Close"
                 >
-                  ✕
+                  <X size={18} />
                 </button>
               </div>
 
@@ -1122,9 +1125,10 @@ export function AdminReturnsDashboard() {
                       <button
                         onClick={() => handleApprove(selectedReturn.id)}
                         disabled={actionLoading}
-                        className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg text-xs transition shadow-xs"
+                        className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg text-xs transition shadow-xs inline-flex items-center gap-1.5"
                       >
-                        ✓ Approve Claim & Book Reverse Pickup
+                        <CheckCircle size={14} />
+                        Approve Claim & Book Reverse Pickup
                       </button>
                       <button
                         onClick={() => {
@@ -1132,9 +1136,10 @@ export function AdminReturnsDashboard() {
                           setShowRejectModal(true);
                         }}
                         disabled={actionLoading}
-                        className="px-4 py-2 bg-rose-700 hover:bg-rose-800 text-white font-bold rounded-lg text-xs transition shadow-xs"
+                        className="px-4 py-2 bg-rose-700 hover:bg-rose-800 text-white font-bold rounded-lg text-xs transition shadow-xs inline-flex items-center gap-1.5"
                       >
-                        ✕ Reject Claim (Specify Reason)
+                        <XCircle size={14} />
+                        Reject Claim (Specify Reason)
                       </button>
                     </div>
                   )}
@@ -1166,9 +1171,10 @@ export function AdminReturnsDashboard() {
                       <button
                         onClick={() => handleMarkReceived(selectedReturn.id)}
                         disabled={actionLoading}
-                        className="px-4 py-2 bg-cyan-700 hover:bg-cyan-800 text-white font-bold rounded-lg text-xs transition shadow-xs"
+                        className="px-4 py-2 bg-cyan-700 hover:bg-cyan-800 text-white font-bold rounded-lg text-xs transition shadow-xs inline-flex items-center gap-1.5"
                       >
-                        ✓ Mark Package Received at Warehouse
+                        <CheckCircle size={14} />
+                        Mark Package Received at Warehouse
                       </button>
                     </div>
                   )}
@@ -1231,9 +1237,10 @@ export function AdminReturnsDashboard() {
                       <button
                         onClick={() => handleMarkExchangeDelivered(selectedReturn.id)}
                         disabled={actionLoading}
-                        className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg text-xs transition shadow-xs"
+                        className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg text-xs transition shadow-xs inline-flex items-center gap-1.5"
                       >
-                        ✓ Mark Exchange Delivered to Customer
+                        <CheckCircle size={14} />
+                        Mark Exchange Delivered to Customer
                       </button>
                     </div>
                   )}
@@ -1446,8 +1453,9 @@ export function AdminReturnsDashboard() {
               <button
                 onClick={() => setPreviewPhoto(null)}
                 className="absolute top-4 right-4 bg-black/60 text-white p-2 rounded-full hover:bg-black"
+                aria-label="Close preview"
               >
-                ✕
+                <X size={18} />
               </button>
             </div>
           </div>

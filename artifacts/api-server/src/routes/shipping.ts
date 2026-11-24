@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { insertAdminNotification } from "../lib/adminNotifications";
 
 const router = Router();
 
@@ -164,6 +165,15 @@ router.post("/shipping/shiprocket-webhook", async (req: any, res: any) => {
       activity: `${activity} (Courier: ${shipment.courierName || "Shiprocket"})`,
       location,
     });
+
+    if (mappedStatus === "rto_initiated" || mappedStatus === "cancelled" || rawStatus.includes("FAIL") || rawStatus.includes("UNDELIVERED")) {
+      await insertAdminNotification({
+        type: "shipping_issue",
+        title: "Shipping Delivery Problem Detected",
+        body: `Shipment #${awb} for Order #${shipment.orderId}: ${activity || rawStatus}. Status: ${mappedStatus}.`,
+        metadata: { shipmentId: shipment.id, orderId: shipment.orderId, awb, courier: shipment.courierName, status: mappedStatus },
+      }).catch(() => {});
+    }
 
     // Update shipment in MongoDB
     await mongoShipments.update(shipment.id, {

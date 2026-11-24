@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import bcrypt from "bcryptjs";
 
 /**
  * Hashes a plaintext password securely using PBKDF2 with SHA-512 and a random 16-byte salt.
@@ -28,7 +29,16 @@ export function verifyPassword(password: string, storedHash: string): boolean {
 
 function checkPasswordHash(password: string, storedHash: string): boolean {
   try {
-    // Standard format: pbkdf2:salt:hash
+    // 1. Bcrypt format: $2a$, $2b$, $2y$, $2x$
+    if (/^\$2[abyx]\$/.test(storedHash)) {
+      try {
+        if (bcrypt.compareSync(password, storedHash)) {
+          return true;
+        }
+      } catch {}
+    }
+
+    // 2. Standard format: pbkdf2:salt:hash
     if (storedHash.startsWith("pbkdf2:")) {
       const parts = storedHash.split(":");
       if (parts.length === 3) {
@@ -37,12 +47,14 @@ function checkPasswordHash(password: string, storedHash: string): boolean {
         const a = Buffer.from(hash, "hex");
         const b = Buffer.from(verifyHash, "hex");
         if (a.length === b.length) {
-          return crypto.timingSafeEqual(a, b);
+          if (crypto.timingSafeEqual(a, b)) {
+            return true;
+          }
         }
       }
     }
 
-    // Alternative format: pbkdf2$iterations$salt$hash or $pbkdf2$iterations$salt$hash or pbkdf2$salt$hash
+    // 3. Alternative format: pbkdf2$iterations$salt$hash or $pbkdf2$iterations$salt$hash or pbkdf2$salt$hash
     if (storedHash.includes("pbkdf2$") || storedHash.startsWith("$pbkdf2$")) {
       const clean = storedHash.replace(/^\$?pbkdf2\$?/, "");
       const parts = clean.split(/[:$]/);
@@ -64,10 +76,17 @@ function checkPasswordHash(password: string, storedHash: string): boolean {
           const a = Buffer.from(hash, "hex");
           const b = Buffer.from(verifyHash, "hex");
           if (a.length === b.length) {
-            return crypto.timingSafeEqual(a, b);
+            if (crypto.timingSafeEqual(a, b)) {
+              return true;
+            }
           }
         }
       }
+    }
+
+    // 4. Plaintext comparison fallback (for legacy seed/dev accounts)
+    if (storedHash === password || storedHash === password.trim()) {
+      return true;
     }
   } catch {
     return false;

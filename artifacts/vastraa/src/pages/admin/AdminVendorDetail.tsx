@@ -329,8 +329,8 @@ function VendorDetailContent() {
               <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3">Admin Actions</h3>
               {vendor.status === "pending" && (
                 <>
-                  <ActionBtn label="✓ Approve Seller" action="approve" color="#15803d" bg="#f0fdf4" loading={actionLoading} onClick={doAction} />
-                  <ActionBtn label="✗ Reject Seller" action="reject" color="#b91c1c" bg="#fef2f2" loading={actionLoading} onClick={doAction} />
+                  <ActionBtn label="Approve Seller" action="approve" color="#15803d" bg="#f0fdf4" loading={actionLoading} onClick={doAction} />
+                  <ActionBtn label="Reject Seller" action="reject" color="#b91c1c" bg="#fef2f2" loading={actionLoading} onClick={doAction} />
                 </>
               )}
               {vendor.status === "approved" && (
@@ -340,10 +340,10 @@ function VendorDetailContent() {
                 </>
               )}
               {(vendor.status === "rejected" || vendor.status === "declined") && (
-                <ActionBtn label="✓ Approve Seller" action="approve" color="#15803d" bg="#f0fdf4" loading={actionLoading} onClick={doAction} />
+                <ActionBtn label="Approve Seller" action="approve" color="#15803d" bg="#f0fdf4" loading={actionLoading} onClick={doAction} />
               )}
               {(vendor.status === "suspended" || vendor.status === "deactivated") && (
-                <ActionBtn label="✓ Reactivate Seller" action="reactivate" color="#15803d" bg="#f0fdf4" loading={actionLoading} onClick={doAction} />
+                <ActionBtn label="Reactivate Seller" action="reactivate" color="#15803d" bg="#f0fdf4" loading={actionLoading} onClick={doAction} />
               )}
               <div className="pt-1 mt-1 border-t border-gray-100">
                 <div className="flex items-center justify-between mb-2">
@@ -352,13 +352,13 @@ function VendorDetailContent() {
                     className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
                     style={vendor.featured ? { background: "#fef9ec", color: "#b45309" } : { background: "#f3f4f6", color: "#6b7280" }}
                   >
-                    {vendor.featured ? "⭐ Featured" : "Not featured"}
+                    {vendor.featured ? "Featured" : "Not featured"}
                   </span>
                 </div>
                 {vendor.featured ? (
                   <ActionBtn label="Remove from Featured" action="unfeature" color="#6b7280" bg="#f3f4f6" loading={actionLoading} onClick={doAction} />
                 ) : (
-                  <ActionBtn label="⭐ Mark as Featured" action="feature" color="#b45309" bg="#fef9ec" loading={actionLoading} onClick={doAction} />
+                  <ActionBtn label="Mark as Featured" action="feature" color="#b45309" bg="#fef9ec" loading={actionLoading} onClick={doAction} />
                 )}
               </div>
               <div className="pt-1 mt-1 border-t border-gray-100">
@@ -368,7 +368,7 @@ function VendorDetailContent() {
                 </div>
                 <div className="space-y-2.5">
                   <ActionBtn
-                    label="✓ Mark KYC Verified"
+                    label="Mark KYC Verified"
                     action="verify"
                     color="#15803d"
                     bg="#f0fdf4"

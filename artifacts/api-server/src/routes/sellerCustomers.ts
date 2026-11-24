@@ -12,6 +12,7 @@ import {
 } from "@workspace/db";
 import { eq, desc, and, inArray, sql } from "drizzle-orm";
 import { isSeller as requireVendorAuth } from "../middlewares/isSeller";
+import { insertAdminNotification } from "../lib/adminNotifications";
 
 const router = Router();
 
@@ -802,6 +803,13 @@ router.post("/seller/tickets/:id/escalate", requireVendorAuth, async (req: any, 
         internal: true,
       }).catch(() => {});
     }
+
+    await insertAdminNotification({
+      type: "vendor_dispute",
+      title: "Seller Dispute Escalated",
+      body: `Seller escalated ticket #${ticket.id} (${ticket.subject || "Dispute"}). ${reason && String(reason).trim() ? String(reason).trim() : ""}`,
+      metadata: { ticketId: ticket.id, vendorId: ticket.vendorId, reason },
+    }).catch(() => {});
 
     res.json(updated || { ...ticket, ...updates });
   } catch (err: any) {

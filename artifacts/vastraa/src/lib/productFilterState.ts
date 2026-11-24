@@ -164,3 +164,32 @@ export function validateFilterValues(filters: ProductFilters): { valid: boolean;
   }
   return { valid: true, error: null };
 }
+
+export function areFiltersEqual(a: ProductFilters, b: ProductFilters): boolean {
+  if (a.collection !== b.collection) return false;
+  if (a.subcategory !== b.subcategory) return false;
+  if (a.subtype !== b.subtype) return false;
+  if (a.vendorId !== b.vendorId) return false;
+  if (a.minPrice !== b.minPrice) return false;
+  if (a.maxPrice !== b.maxPrice) return false;
+  if (a.minRating !== b.minRating) return false;
+  if (a.minDiscount !== b.minDiscount) return false;
+  if (a.newArrival !== b.newArrival) return false;
+  if (a.hasOffer !== b.hasOffer) return false;
+  if (a.blouseIncluded !== b.blouseIncluded) return false;
+  if (a.availability !== b.availability) return false;
+  if (a.hasDiscount !== b.hasDiscount) return false;
+  const arrayKeys: (keyof ProductFilters)[] = [
+    "fabric", "color", "brand", "size", "sleeveLength", "neckStyle",
+    "pattern", "occasion", "gender", "sareeType", "sareeStyle", "packOf", "countryOfOrigin"
+  ];
+  for (const k of arrayKeys) {
+    const arrA = (a[k] as string[]) || [];
+    const arrB = (b[k] as string[]) || [];
+    if (arrA.length !== arrB.length) return false;
+    for (let i = 0; i < arrA.length; i++) {
+      if (arrA[i] !== arrB[i]) return false;
+    }
+  }
+  return true;
+}

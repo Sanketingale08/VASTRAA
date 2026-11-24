@@ -1,0 +1,234 @@
+name: Continuous Deployment (CD) - Production
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual production deployment'
+        required: false
+        default: 'Manual deployment triggered by administrator'
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  ci-verification:
+    name: Run CI Pipeline Verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+
+      - name: Setup Node.js Runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: |
+          pnpm install --frozen-lockfile --prefer-offline || pnpm install
+
+      - name: Validate Frontend TypeScript
+        run: |
+          pnpm --filter @workspace/twirldrape run typecheck
+
+      - name: Build Backend
+        run: |
+          pnpm --filter @workspace/api-server run build
+
+      - name: Build Frontend
+        run: |
+          pnpm --filter @workspace/twirldrape run build
+
+      - name: Verify Build Artifacts
+        run: |
+          test -f artifacts/api-server/dist/index.mjs || { echo "Backend build artifact missing"; exit 1; }
+          test -f artifacts/vastraa/dist/public/index.html || { echo "Frontend build artifact missing"; exit 1; }
+
+  deploy-to-ec2:
+    name: Deploy to AWS EC2 Production
+    needs: ci-verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Display Deployment Context
+        run: |
+          echo "=========================================================="
+          echo " Starting VASTRAA Production Deployment"
+          echo " Commit ID: ${{ github.sha }}"
+          echo " Ref      : ${{ github.ref }}"
+          echo " Actor    : ${{ github.actor }}"
+          echo " Timestamp: $(date -u)"
+          echo " Target   : https://vastraasaree.com"
+          echo "=========================================================="
+
+      - name: Configure SSH Key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+
+      - name: Add EC2 Host to Known Hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Execute Zero-Downtime Deployment on EC2
+        env:
+          HOST: ${{ secrets.EC2_HOST }}
+          USER: ${{ secrets.EC2_USERNAME }}
+          TARGET_DIR: ${{ secrets.EC2_DEPLOY_PATH }}
+          TARGET_BRANCH: ${{ github.ref_name }}
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          echo "[+] Connecting to ${USER}@${HOST}..."
+          ssh "${USER}@${HOST}" "bash -s" << 'EOF'
+            set -euo pipefail
+            DEPLOY_PATH="${TARGET_DIR:-/var/www/vastraa}"
+            APP_NAME="vastraa-api"
+            
+            echo "========================================================="
+            echo "  VASTRAA SERVER-SIDE DEPLOYMENT TASK STARTED"
+            echo "  Working Directory: ${DEPLOY_PATH}"
+            echo "========================================================="
+
+            cd "${DEPLOY_PATH}"
+
+            # 1. Protect and verify production .env
+            if [ ! -f ".env" ]; then
+              echo "[-] CRITICAL ERROR: .env file missing in ${DEPLOY_PATH}. Deployment aborted." >&2
+              exit 1
+            fi
+            
+            # Ensure upload directories remain intact
+            mkdir -p "${DEPLOY_PATH}/artifacts/api-server/public/uploads"
+            mkdir -p "${DEPLOY_PATH}/artifacts/api-server/public/invoices"
+
+            # 2. Backup current running bundle for instant rollback
+            ROLLBACK_DIR="${DEPLOY_PATH}/.deploy_backups/backup-$(date +%s)"
+            mkdir -p "${ROLLBACK_DIR}"
+            if [ -f "artifacts/api-server/dist/index.mjs" ]; then
+              mkdir -p "${ROLLBACK_DIR}/api-server-dist"
+              cp -r artifacts/api-server/dist/* "${ROLLBACK_DIR}/api-server-dist/" || true
+            fi
+            if [ -d "artifacts/vastraa/dist" ]; then
+              mkdir -p "${ROLLBACK_DIR}/vastraa-dist"
+              cp -r artifacts/vastraa/dist/* "${ROLLBACK_DIR}/vastraa-dist/" || true
+            fi
+
+            # 3. Pull latest code
+            git fetch origin
+            git checkout "${TARGET_BRANCH}"
+            git pull origin "${TARGET_BRANCH}"
+
+            # 4. Install dependencies
+            if ! command -v pnpm &> /dev/null; then
+              corepack enable || npm install -g pnpm@latest
+            fi
+            pnpm install --frozen-lockfile --prefer-offline || pnpm install
+
+            # 5. Build packages
+            pnpm --filter @workspace/api-server run build
+            pnpm --filter @workspace/twirldrape run build
+
+            # 6. PM2 Graceful Reload
+            if pm2 describe "${APP_NAME}" > /dev/null 2>&1; then
+              echo "[+] Reloading existing PM2 cluster gracefully..."
+              pm2 reload "${APP_NAME}" --update-env
+            else
+              echo "[+] Starting new PM2 cluster process..."
+              cd "${DEPLOY_PATH}/artifacts/api-server"
+              pm2 start dist/index.mjs --name "${APP_NAME}" -i max --node-args="--enable-source-maps"
+              cd "${DEPLOY_PATH}"
+            fi
+            pm2 save || true
+
+            # 7. Health Verification
+            echo "[+] Running local backend health verification..."
+            HEALTH_URL="http://127.0.0.1:5000/api/healthz"
+            SUCCESS=false
+            for i in {1..20}; do
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${HEALTH_URL}" || true)
+              if [ "${STATUS}" = "200" ]; then
+                echo "[+] Local backend health check passed on attempt ${i}!"
+                SUCCESS=true
+                break
+              fi
+              echo "Waiting for backend service to stabilize (attempt ${i}/20)..."
+              sleep 3
+            done
+
+            if [ "${SUCCESS}" = false ]; then
+              echo "[-] CRITICAL: Local health check failed. Reverting to previous bundle..." >&2
+              if [ -d "${ROLLBACK_DIR}/api-server-dist" ]; then
+                cp -r "${ROLLBACK_DIR}/api-server-dist/"* "${DEPLOY_PATH}/artifacts/api-server/dist/"
+              fi
+              if [ -d "${ROLLBACK_DIR}/vastraa-dist" ]; then
+                cp -r "${ROLLBACK_DIR}/vastraa-dist/"* "${DEPLOY_PATH}/artifacts/vastraa/dist/"
+              fi
+              pm2 reload "${APP_NAME}" || true
+              exit 1
+            fi
+
+            # Reload Nginx if configured
+            if command -v nginx &> /dev/null; then
+              sudo nginx -t && sudo systemctl reload nginx || true
+            fi
+          EOF
+
+      - name: Verify Public Health & SSL Status
+        run: |
+          echo "=========================================================="
+          echo " Verifying Live Public Production Endpoints"
+          echo "=========================================================="
+          
+          echo "[+] Checking Public Homepage (https://vastraasaree.com)..."
+          FRONTEND_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" https://vastraasaree.com)
+          echo "Frontend HTTP Status Code: ${FRONTEND_HTTP_CODE}"
+          if [ "${FRONTEND_HTTP_CODE}" -ne 200 ]; then
+            echo "[-] WARNING: Frontend returned unexpected status: ${FRONTEND_HTTP_CODE}"
+            exit 1
+          fi
+
+          echo "[+] Checking Public API Healthz Endpoint (https://vastraasaree.com/api/healthz)..."
+          HEALTH_RESPONSE=$(curl -s -f https://vastraasaree.com/api/healthz)
+          echo "Health Response: ${HEALTH_RESPONSE}"
+
+          # Ensure MongoDB connection is confirmed in JSON response
+          if echo "${HEALTH_RESPONSE}" | grep -q '"connected":true'; then
+            echo "[+] MongoDB Atlas connectivity verified successfully!"
+          else
+            echo "[-] ERROR: Database not connected in health response!"
+            exit 1
+          fi
+
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo "=========================================================="
+          echo " DEPLOYMENT REPORT"
+          echo " Commit SHA : ${{ github.sha }}"
+          echo " Workflow   : ${{ github.workflow }}"
+          echo " Status     : ${{ job.status }}"
+          echo " Domain     : https://vastraasaree.com"
+          echo " Health API : https://vastraasaree.com/api/healthz"
+          echo " Timestamp  : $(date -u)"
+          echo "=========================================================="
+

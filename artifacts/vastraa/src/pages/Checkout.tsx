@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/context/AuthContext";
 import { motion, AnimatePresence } from "framer-motion";
@@ -6,6 +6,7 @@ import {
   Check, ChevronRight, Truck, Zap, CreditCard, Smartphone,
   HandCoins, Tag, X, Loader2, CheckCircle, XCircle, Building2, Wallet as WalletIcon,
   AlertTriangle, Clock, Info, Banknote, ArrowRight, ShoppingBag, ShieldCheck, MapPin,
+  ClipboardList, FlaskConical, Sparkles,
 } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { CheckoutSkeleton } from "@/components/skeletons";
@@ -14,6 +15,7 @@ import type { CartItem, StockAdjustment } from "@/context/CartContext";
 import { useToast } from "@/hooks/use-toast";
 import { getProductImageSrc, replaceProductImageWithFallback } from "@/lib/productImages";
 import { apiFetch } from "@/lib/api";
+import { loadCashfreeSdk } from "@/lib/cashfree";
 import { VastraaCouponCard } from "@/components/VastraaCouponCard";
 
 const GMAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
@@ -185,8 +187,9 @@ export function TaxBreakdownAccordion({ items }: { items: CartItem[] }) {
         onClick={() => setIsOpen(!isOpen)}
         className="w-full px-3 py-1.5 flex items-center justify-between text-xs text-[#0A1F44] dark:text-[#C7CCD1] font-semibold hover:bg-gray-100 dark:hover:bg-[#2A2E35] transition-colors"
       >
-        <span className="flex items-center gap-1">
-          <span>📋</span> Tax breakdown
+        <span className="flex items-center gap-1.5">
+          <ClipboardList size={13} className="text-[#0A1F44] dark:text-blue-300" />
+          <span>Tax breakdown</span>
         </span>
         <span className="text-[10px] text-gray-500 font-normal">
           {isOpen ? "Hide ▲" : "Show details ▼"}
@@ -357,7 +360,8 @@ function UpiWaitingModal({
               <div className="p-3.5 bg-amber-50/90 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 rounded-xl space-y-2.5">
                 <div className="flex items-center justify-between">
                   <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-900 dark:text-amber-200 uppercase tracking-wide">
-                    <span>🧪</span> Sandbox Test Mode
+                    <FlaskConical size={13} className="text-amber-700 dark:text-amber-400" />
+                    <span>Sandbox Test Mode</span>
                   </span>
                   <span className="text-[10px] bg-amber-200/80 dark:bg-amber-800 text-amber-900 dark:text-amber-100 font-semibold px-2 py-0.5 rounded-full">
                     No Phone Alert Sent
@@ -376,7 +380,7 @@ function UpiWaitingModal({
                     {simulating ? (
                       <><Loader2 size={14} className="animate-spin" /> Simulating Bank Approval…</>
                     ) : (
-                      <><Zap size={14} className="text-yellow-200 fill-yellow-200" /> ⚡ Approve Payment in Sandbox</>
+                      <><Zap size={14} className="text-yellow-200 fill-yellow-200" /> Approve Payment in Sandbox</>
                     )}
                   </button>
                 )}
@@ -473,7 +477,27 @@ export function CheckoutPage() {
   const { toast } = useToast();
 
   const [step, setStep] = useState(1);
-  const [buyNowItems, setBuyNowItems] = useState<CartItem[] | null>(null);
+  const [buyNowItems, setBuyNowItems] = useState<CartItem[] | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = sessionStorage.getItem(BUY_NOW_KEY);
+      if (raw) {
+        const data = JSON.parse(raw);
+        if (data?.product) {
+          const qty = Math.max(1, Number(data.quantity ?? data.product.quantity ?? 1));
+          const price = Number(data.product.price ?? 0);
+          const origPrice = data.product.originalPrice != null ? Number(data.product.originalPrice) : null;
+          return [{
+            ...data.product,
+            quantity: isNaN(qty) ? 1 : qty,
+            price: isNaN(price) ? 0 : price,
+            originalPrice: origPrice !== null && !isNaN(origPrice) ? origPrice : null,
+          }];
+        }
+      }
+    } catch {}
+    return null;
+  });
   const [placing, setPlacing] = useState(false);
   const [placeError, setPlaceError] = useState("");
   const [stockNotice, setStockNotice] = useState<StockAdjustment[]>([]);
@@ -615,7 +639,7 @@ export function CheckoutPage() {
     if (!upiModalData?.paymentSessionId || !upiModalData?.orderId) return;
     try {
       stopUpiPolling();
-      const cashfreeLib = (window as any).Cashfree;
+      const cashfreeLib = await loadCashfreeSdk();
       if (!cashfreeLib) {
         toast({ title: "SDK Loading", description: "Payment gateway SDK is still loading. Please try again.", variant: "destructive" });
         return;
@@ -675,10 +699,76 @@ export function CheckoutPage() {
   const [availableCouponsList, setAvailableCouponsList] = useState<any[]>([]);
   const [loadingCoupons, setLoadingCoupons] = useState(false);
 
-  const fetchAvailableCoupons = useCallback(async () => {
+  // ── 1. Order Items & Safe Numeric Normalization ───────────────────────────
+  const orderItems = useMemo(() => {
+    const rawList = (buyNowItems ?? cartItems) || [];
+    return rawList.map((item, idx) => {
+      const productId = item.productId || (item as any).id || (item as any)._id || `item_${idx}`;
+      const sellingPrice = Number(item.price ?? 0);
+      const originalPrice = item.originalPrice != null ? Number(item.originalPrice) : null;
+      const quantity = Math.max(1, Number(item.quantity ?? 1));
+      const stock = typeof item.stock === "number" ? item.stock : 99;
+      return {
+        ...item,
+        productId,
+        price: isNaN(sellingPrice) ? 0 : Math.max(0, sellingPrice),
+        originalPrice: originalPrice !== null && !isNaN(originalPrice) ? Math.max(0, originalPrice) : null,
+        quantity: isNaN(quantity) ? 1 : quantity,
+        stock: isNaN(stock) ? 0 : Math.max(0, stock),
+      };
+    });
+  }, [buyNowItems, cartItems]);
+
+  const hasOutOfStockItem = orderItems.some((i) => i.stock === 0);
+  const totalQuantity = orderItems.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+  const totalMRP = orderItems.reduce((s, i) => {
+    const orig = typeof i.originalPrice === "number" && i.originalPrice > 0 ? i.originalPrice : i.price;
+    return s + orig * i.quantity;
+  }, 0);
+
+  // ── 2. Total Selling Price & MRP Discount ─────────────────────────────────
+  const totalSellingPrice = orderItems.reduce((s, i) => s + i.price * i.quantity, 0);
+  const mrpDiscount = Math.max(0, totalMRP - totalSellingPrice);
+
+  // ── 3. Shipping, COD, and Platform Fees ───────────────────────────────────
+  const platformFee = 20; // Fixed ₹20 per order
+  const codFee = paymentMethod === "cod" ? 10 : 0; // Fixed ₹10 for COD
+  const shippingCost = 0; // Always FREE
+
+  const couponHoursLeft = appliedCoupon?.expiresAt
+    ? (new Date(appliedCoupon.expiresAt).getTime() - Date.now()) / 3600000
+    : null;
+  const couponExpiringSoon = couponHoursLeft !== null && couponHoursLeft > 0 && couponHoursLeft <= 72;
+  const couponDaysLeft = couponExpiringSoon ? Math.max(1, Math.ceil((couponHoursLeft as number) / 24)) : null;
+
+  // ── 4. Coupon Discount Calculation ────────────────────────────────────────
+  let couponDiscount = 0;
+  if (appliedCoupon) {
+    if (typeof appliedCoupon.discount === "number" && appliedCoupon.discount > 0) {
+      couponDiscount = appliedCoupon.discount;
+    } else {
+      couponDiscount = appliedCoupon.type === "percent"
+        ? Math.round(totalSellingPrice * (Number(appliedCoupon.value) || 0) / 100)
+        : Math.min(Number(appliedCoupon.value) || 0, totalSellingPrice);
+    }
+    if (appliedCoupon.maxDiscountAmount && couponDiscount > appliedCoupon.maxDiscountAmount) {
+      couponDiscount = appliedCoupon.maxDiscountAmount;
+    }
+  }
+  couponDiscount = Math.max(0, Math.min(couponDiscount, totalSellingPrice));
+
+  // ── 5. Final Subtotal, GST, and Payable Total ─────────────────────────────
+  const subtotal = totalSellingPrice;
+  const discount = couponDiscount;
+  const afterDiscount = Math.max(0, subtotal - discount);
+  const gst = 0; // Prices are GST-inclusive in VASTRAA catalog
+  const total = Math.max(0, totalSellingPrice - couponDiscount + platformFee + codFee + shippingCost);
+
+  const fetchAvailableCoupons = useCallback(async (customSubtotal?: number) => {
     try {
       setLoadingCoupons(true);
-      const res = await apiFetch("/api/coupons/available");
+      const targetSubtotal = typeof customSubtotal === "number" ? customSubtotal : totalSellingPrice;
+      const res = await apiFetch(`/api/coupons/available?subtotal=${encodeURIComponent(targetSubtotal)}`);
       if (res.ok) {
         const data = await res.json();
         setAvailableCouponsList(data.coupons || []);
@@ -688,7 +778,7 @@ export function CheckoutPage() {
     } finally {
       setLoadingCoupons(false);
     }
-  }, []);
+  }, [totalSellingPrice]);
 
   const [pincodeStatus, setPincodeStatus] = useState<{
     loading: boolean; available?: boolean; message?: string;
@@ -752,17 +842,22 @@ export function CheckoutPage() {
       if (raw) {
         const data = JSON.parse(raw);
         if (data?.product) {
-          setBuyNowItems([{ ...data.product, quantity: data.quantity ?? 1 }]);
+          const qty = Math.max(1, Number(data.quantity ?? data.product.quantity ?? 1));
+          const price = Number(data.product.price ?? 0);
+          const origPrice = data.product.originalPrice != null ? Number(data.product.originalPrice) : null;
+          setBuyNowItems([{
+            ...data.product,
+            quantity: isNaN(qty) ? 1 : qty,
+            price: isNaN(price) ? 0 : price,
+            originalPrice: origPrice !== null && !isNaN(origPrice) ? origPrice : null,
+          }]);
         }
       }
     } catch {}
-    return () => {
-      if (!orderPlacedRef.current) sessionStorage.removeItem(BUY_NOW_KEY);
-    };
   }, []);
 
   useEffect(() => {
-    if (isLoaded && !isSignedIn) setLocation("/sign-in");
+    if (isLoaded && !isSignedIn) setLocation("/sign-in?redirect=/checkout");
   }, [isLoaded, isSignedIn, setLocation]);
 
   async function revalidateStock(): Promise<StockAdjustment[]> {
@@ -886,54 +981,17 @@ export function CheckoutPage() {
       .catch(() => {});
   }, [isLoaded, isSignedIn, savedMethodsLoaded]);
 
-  const orderItems = buyNowItems ?? cartItems;
-  const hasOutOfStockItem = orderItems.some((i) => i.stock === 0);
-  const totalQuantity = orderItems.reduce((s, i) => s + i.quantity, 0);
-  const totalMRP = orderItems.reduce((s, i) => s + Math.max(i.originalPrice ?? 0, i.price) * i.quantity, 0);
-  const totalSellingPrice = orderItems.reduce((s, i) => s + i.price * i.quantity, 0);
-  const mrpDiscount = Math.max(0, totalMRP - totalSellingPrice);
-  const platformFee = 20; // Fixed ₹20 per order
-  const codFee = paymentMethod === "cod" ? 10 : 0; // Fixed ₹10 for COD
-  const shippingCost = 0; // Always FREE
-
-  const couponHoursLeft = appliedCoupon?.expiresAt
-    ? (new Date(appliedCoupon.expiresAt).getTime() - Date.now()) / 3600000
-    : null;
-  const couponExpiringSoon = couponHoursLeft !== null && couponHoursLeft > 0 && couponHoursLeft <= 72;
-  const couponDaysLeft = couponExpiringSoon ? Math.max(1, Math.ceil((couponHoursLeft as number) / 24)) : null;
-
-  let couponDiscount = 0;
-  if (appliedCoupon) {
-    if (typeof appliedCoupon.discount === "number" && appliedCoupon.discount > 0) {
-      couponDiscount = appliedCoupon.discount;
-    } else {
-      couponDiscount = appliedCoupon.type === "percent"
-        ? Math.round(totalSellingPrice * appliedCoupon.value / 100)
-        : Math.min(appliedCoupon.value, totalSellingPrice);
-    }
-    if (appliedCoupon.maxDiscountAmount && couponDiscount > appliedCoupon.maxDiscountAmount) {
-      couponDiscount = appliedCoupon.maxDiscountAmount;
-    }
-  }
-
   // Auto-remove coupon if subtotal drops below minimum order value after cart updates
   useEffect(() => {
     if (appliedCoupon?.minimumOrderValue && totalSellingPrice < appliedCoupon.minimumOrderValue) {
-      const removedCode = appliedCoupon.code;
-      const requiredMov = appliedCoupon.minimumOrderValue;
       setAppliedCoupon(null);
       toast({
         title: "Coupon Removed",
-        description: `Coupon ${removedCode} requires a minimum order of ₹${requiredMov.toLocaleString("en-IN")}. Add more items to re-apply.`,
+        description: "Your cart value is below the minimum purchase requirement. Coupon removed.",
         variant: "destructive",
       });
     }
   }, [appliedCoupon, totalSellingPrice, toast]);
-  const subtotal = totalSellingPrice;
-  const discount = couponDiscount;
-  const afterDiscount = subtotal - discount;
-  const gst = 0;
-  const total = totalSellingPrice - couponDiscount + platformFee + codFee;
 
   function validateAddress() {
     return (
@@ -998,6 +1056,11 @@ export function CheckoutPage() {
       });
       setCouponCode("");
       setShowCouponModal(false);
+      const savedAmount = (data.discount || data.value || 0).toLocaleString("en-IN");
+      toast({
+        title: "Coupon Applied!",
+        description: data.message || `Congratulations! You saved ₹${savedAmount} using ${data.code}.`,
+      });
     } catch {
       setCouponError("Could not validate coupon. Please try again.");
     } finally {
@@ -1269,7 +1332,7 @@ export function CheckoutPage() {
       }
 
       const cfData = await cfRes.json();
-      const cashfreeLib = (window as any).Cashfree;
+      const cashfreeLib = await loadCashfreeSdk();
       if (!cashfreeLib) {
         throw new Error("Cashfree payment gateway SDK is loading. Please try again in a few moments.");
       }
@@ -1357,7 +1420,7 @@ export function CheckoutPage() {
   return (
     <Layout>
       <div className="min-h-screen bg-[#F4F5F7] dark:bg-[#1E2329]">
-        <div className="container mx-auto px-4 py-8 max-w-5xl">
+        <div className="container mx-auto px-3 sm:px-4 py-5 sm:py-8 max-w-5xl">
           <div className="flex items-center gap-3 mb-6 sm:mb-8">
             <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#0A1F44]">Checkout</h1>
             {buyNowItems && (
@@ -1450,7 +1513,7 @@ export function CheckoutPage() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -16 }}
                     transition={{ duration: 0.25 }}
-                    className="bg-white dark:bg-[#2A2E35] rounded-xl border border-[#C7CCD1]/20 p-5 sm:p-6"
+                    className="bg-white dark:bg-[#2A2E35] rounded-xl border border-[#C7CCD1]/20 p-4 sm:p-6"
                   >
                     <h2 className="font-serif text-xl font-bold text-[#0A1F44] mb-5">Shipping Address</h2>
 
@@ -1635,7 +1698,7 @@ export function CheckoutPage() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -16 }}
                     transition={{ duration: 0.25 }}
-                    className="bg-white dark:bg-[#2A2E35] rounded-xl border border-[#C7CCD1]/20 p-5 sm:p-6"
+                    className="bg-white dark:bg-[#2A2E35] rounded-xl border border-[#C7CCD1]/20 p-4 sm:p-6"
                   >
                     <h2 className="font-serif text-xl font-bold text-[#0A1F44] mb-5">Delivery Method</h2>
                     <div className="space-y-3">
@@ -1695,7 +1758,7 @@ export function CheckoutPage() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -16 }}
                     transition={{ duration: 0.25 }}
-                    className="bg-white dark:bg-[#2A2E35] rounded-xl border border-[#C7CCD1]/20 p-5 sm:p-6"
+                    className="bg-white dark:bg-[#2A2E35] rounded-xl border border-[#C7CCD1]/20 p-4 sm:p-6"
                   >
                     <h2 className="font-serif text-xl font-bold text-[#0A1F44] mb-5">Payment Method</h2>
 
@@ -1860,8 +1923,9 @@ export function CheckoutPage() {
                                     </button>
                                   ))}
                                 </div>
-                                <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-2 bg-amber-50/70 dark:bg-amber-950/30 p-2 rounded-lg border border-amber-200/50">
-                                  💡 <strong>Sandbox Tip:</strong> In test mode, real UPI apps do not receive real bank push notifications. You can use <button type="button" onClick={() => { setUpiId("testsuccess@gocash"); setUpiError(""); }} className="underline font-mono font-bold">testsuccess@gocash</button> for instant auto-approval, or enter your UPI ID and click "Approve Payment in Sandbox" on the waiting screen.
+                                <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-2 bg-amber-50/70 dark:bg-amber-950/30 p-2 rounded-lg border border-amber-200/50 flex items-start gap-1.5">
+                                  <Info size={14} className="text-amber-700 dark:text-amber-400 shrink-0 mt-0.5" />
+                                  <span><strong>Sandbox Tip:</strong> In test mode, real UPI apps do not receive real bank push notifications. You can use <button type="button" onClick={() => { setUpiId("testsuccess@gocash"); setUpiError(""); }} className="underline font-mono font-bold">testsuccess@gocash</button> for instant auto-approval, or enter your UPI ID and click "Approve Payment in Sandbox" on the waiting screen.</span>
                                 </p>
                               </div>
 
@@ -2060,7 +2124,7 @@ export function CheckoutPage() {
                     className="space-y-6"
                   >
                     {/* 1. Order Review / Items Card */}
-                    <div className="bg-white dark:bg-[#2A2E35] rounded-2xl border border-[#C7CCD1]/30 dark:border-gray-700/60 p-5 sm:p-7 shadow-xs">
+                    <div className="bg-white dark:bg-[#2A2E35] rounded-2xl border border-[#C7CCD1]/30 dark:border-gray-700/60 p-4 sm:p-7 shadow-xs">
                       <div className="flex items-center justify-between gap-4 mb-5 pb-4 border-b border-[#C7CCD1]/20 dark:border-gray-700/40">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 rounded-full bg-[#0A1F44]/10 text-[#0A1F44] dark:bg-white/10 dark:text-[#C7CCD1] flex items-center justify-center shrink-0">
@@ -2575,8 +2639,16 @@ export function CheckoutPage() {
                       </div>
                     )}
                     <div className="flex justify-between">
+                      <span className="opacity-60">Shipping</span>
+                      <span className="text-green-600 font-semibold">FREE</span>
+                    </div>
+                    <div className="flex justify-between">
                       <span className="opacity-60">Platform Fee</span>
                       <span>₹{platformFee}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="opacity-60">Estimated GST (5%)</span>
+                      <span>₹{Math.round(Math.max(0, totalSellingPrice - couponDiscount) * 0.05).toLocaleString("en-IN")}</span>
                     </div>
                     {paymentMethod === "cod" && (
                       <div className="flex justify-between text-emerald-700">
@@ -2584,12 +2656,8 @@ export function CheckoutPage() {
                         <span>₹{codFee}</span>
                       </div>
                     )}
-                    <div className="flex justify-between">
-                      <span className="opacity-60">Shipping</span>
-                      <span className="text-green-600 font-semibold">FREE</span>
-                    </div>
                     <div className="border-t border-[#C7CCD1]/20 pt-2 flex justify-between font-bold text-[#0A1F44] dark:text-[#E5E8EC] text-sm">
-                      <span>Total Amount</span>
+                      <span>Final Payable Amount</span>
                       <span>₹{total.toLocaleString("en-IN")}</span>
                     </div>
                   </div>
@@ -2606,6 +2674,33 @@ export function CheckoutPage() {
                     {totalQuantity} {totalQuantity === 1 ? "Item" : "Items"}
                   </span>
                 </div>
+
+                {/* Items Preview for Steps 1-3 */}
+                {step !== 4 && orderItems.length > 0 && (
+                  <div className="pb-3 border-b border-[#C7CCD1]/20 dark:border-gray-700/40">
+                    <p className="text-xs uppercase tracking-wider font-semibold text-gray-500 dark:text-gray-400 mb-2.5">
+                      Order Items ({totalQuantity})
+                    </p>
+                    <div className="max-h-56 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700/40 pr-1 space-y-2">
+                      {orderItems.map((item, idx) => (
+                        <div key={item.productId || `preview_${idx}`} className="pt-2 first:pt-0 flex items-center gap-3">
+                          <img
+                            src={getProductImageSrc(item.images?.[0])}
+                            alt={item.name}
+                            className="w-10 h-10 object-cover rounded-md bg-[#FAF7F2] dark:bg-gray-800 shrink-0 border border-[#C7CCD1]/40 dark:border-gray-700"
+                            onError={replaceProductImageWithFallback}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-gray-800 dark:text-gray-200 truncate">{item.name}</p>
+                            <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                              Qty: {Math.max(1, Number(item.quantity) || 1)}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Coupon input & applied state */}
                 <div className="pb-3 border-b border-[#C7CCD1]/20 dark:border-gray-700/40">
@@ -2690,7 +2785,7 @@ export function CheckoutPage() {
                   )}
 
                   <div className="flex justify-between text-gray-600 dark:text-gray-300">
-                    <span>Product Price</span>
+                    <span>Product Subtotal</span>
                     <span className="font-medium text-gray-900 dark:text-white">₹{totalSellingPrice.toLocaleString("en-IN")}</span>
                   </div>
 
@@ -2701,9 +2796,21 @@ export function CheckoutPage() {
                     </div>
                   )}
 
+                  <div className="flex justify-between text-gray-600 dark:text-gray-300 items-center">
+                    <span>Shipping</span>
+                    <span className="text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded text-xs">
+                      FREE
+                    </span>
+                  </div>
+
                   <div className="flex justify-between text-gray-600 dark:text-gray-300">
                     <span>Platform Fee</span>
                     <span>₹{platformFee}</span>
+                  </div>
+
+                  <div className="flex justify-between text-gray-600 dark:text-gray-300">
+                    <span>Estimated GST (5%)</span>
+                    <span>₹{Math.round(Math.max(0, totalSellingPrice - couponDiscount) * 0.05).toLocaleString("en-IN")}</span>
                   </div>
 
                   {paymentMethod === "cod" && (
@@ -2712,27 +2819,21 @@ export function CheckoutPage() {
                       <span>₹{codFee}</span>
                     </div>
                   )}
-
-                  <div className="flex justify-between text-gray-600 dark:text-gray-300 items-center">
-                    <span>Shipping Charges</span>
-                    <span className="text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded text-xs">
-                      FREE
-                    </span>
-                  </div>
                 </div>
 
                 {/* Final Payable Total */}
                 <div className="border-t border-[#C7CCD1]/30 dark:border-gray-700/60 pt-3">
                   <div className="flex justify-between items-baseline">
-                    <span className="font-serif text-base sm:text-lg font-bold text-[#0A1F44] dark:text-[#E5E8EC]">Total Amount</span>
+                    <span className="font-serif text-base sm:text-lg font-bold text-[#0A1F44] dark:text-[#E5E8EC]">Final Payable Amount</span>
                     <span className="font-serif text-xl sm:text-2xl font-bold text-[#0A1F44] dark:text-white">
                       ₹{total.toLocaleString("en-IN")}
                     </span>
                   </div>
 
                   {(mrpDiscount > 0 || couponDiscount > 0) && (
-                    <p className="mt-2 text-xs text-emerald-600 dark:text-emerald-400 font-semibold text-center bg-emerald-50 dark:bg-emerald-950/40 py-1 px-2 rounded-md border border-emerald-200 dark:border-emerald-800/40">
-                      🎉 You save ₹{(mrpDiscount + couponDiscount).toLocaleString("en-IN")} on this order!
+                    <p className="mt-2 text-xs text-emerald-600 dark:text-emerald-400 font-semibold text-center bg-emerald-50 dark:bg-emerald-950/40 py-1 px-2 rounded-md border border-emerald-200 dark:border-emerald-800/40 flex items-center justify-center gap-1.5">
+                      <Sparkles size={12} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <span>You save ₹{(mrpDiscount + couponDiscount).toLocaleString("en-IN")} on this order!</span>
                     </p>
                   )}
                 </div>

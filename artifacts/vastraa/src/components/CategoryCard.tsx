@@ -1,6 +1,6 @@
 import React from "react";
+import { Sparkles, ArrowRight } from "lucide-react";
 import { motion } from "framer-motion";
-import { ArrowRight } from "lucide-react";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 
@@ -90,10 +90,11 @@ export function CategoryCard({
 
       <div className="relative z-10 p-4 xs:p-6 md:p-9">
         <span
-          className="inline-block px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-[0.2em] mb-4 border"
+          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-[0.2em] mb-4 border"
           style={{ color: GOLD, borderColor: GOLD + "55", background: GOLD + "15" }}
         >
-          ✨ {card.chipLabel}
+          <Sparkles size={11} className="shrink-0" />
+          <span>{card.chipLabel}</span>
         </span>
         <p className="text-xs font-bold uppercase tracking-[0.2em] mb-2" style={{ color: GOLD }}>
           {card.tagline}

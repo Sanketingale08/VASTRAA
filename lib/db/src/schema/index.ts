@@ -26,4 +26,5 @@ export * from "./bulk_import_batches";
 export * from "./users";
 export * from "./sellers";
 export * from "./shipments";
+export * from "./admin_devices";
 

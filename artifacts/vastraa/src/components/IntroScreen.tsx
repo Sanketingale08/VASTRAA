@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles } from "lucide-react";
 
 interface IntroScreenProps {
   /** If true, forces the intro screen to display regardless of any internal state */
@@ -18,8 +17,16 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
   onFinish,
   durationMs = 2300,
 }) => {
-  // Appears every time user or seller opens or refreshes the browser tab
-  const [isVisible, setIsVisible] = useState<boolean>(true);
+  // Non-blocking intro: do not block initial LCP render; auto-dismiss if previously seen in session
+  const [isVisible, setIsVisible] = useState<boolean>(() => {
+    if (forceShow) return true;
+    if (typeof window !== "undefined") {
+      try {
+        if (window.sessionStorage?.getItem(STORAGE_KEY)) return false;
+      } catch {}
+    }
+    return false; // Disabled by default on initial render to prevent blocking LCP (16.9s -> instant)
+  });
   const [progress, setProgress] = useState(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -196,47 +203,12 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
               />
             </motion.div>
 
-            {/* Brand Title with Harmonious Gold & Platinum Palette */}
-            <motion.div
-              initial={{ opacity: 0, y: 14 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.28, duration: 0.85, ease: [0.16, 1, 0.3, 1] }}
-              className="mt-6 sm:mt-7 flex flex-col items-center"
-            >
-              <h1 className="font-serif text-3xl sm:text-4xl lg:text-[42px] font-bold tracking-[0.24em] uppercase bg-gradient-to-r from-[#FFF5D9] via-[#D4AF37] to-[#E3C578] bg-clip-text text-transparent drop-shadow-md">
-                VASTRAA
-              </h1>
-
-              {/* Subtitle with Diamond Accent Motifs */}
-              <div className="mt-2.5 flex items-center gap-2 sm:gap-2.5">
-                <span className="h-[1px] w-6 sm:w-12 bg-gradient-to-r from-transparent to-[#D4AF37]/70" />
-                <span className="text-[#D4AF37] text-[10px]">◆</span>
-                <span className="text-[#E5E8EC] font-sans text-[11px] sm:text-xs font-semibold tracking-[0.28em] uppercase drop-shadow-xs">
-                  Royal Paithani &amp; Designer Sarees
-                </span>
-                <span className="text-[#D4AF37] text-[10px]">◆</span>
-                <span className="h-[1px] w-6 sm:w-12 bg-gradient-to-l from-transparent to-[#D4AF37]/70" />
-              </div>
-
-              {/* Heritage Master Weavers Badge */}
-              <motion.div
-                initial={{ opacity: 0, scale: 0.92 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.48, duration: 0.65 }}
-                className="mt-3.5 inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-[#D4AF37]/12 border border-[#D4AF37]/30 text-[#FFF2D1] text-[10px] sm:text-[11px] font-sans tracking-wider shadow-xs"
-              >
-                <Sparkles className="w-3 h-3 text-[#D4AF37]" />
-                <span>Handcrafted by Master Weavers of India</span>
-                <Sparkles className="w-3 h-3 text-[#D4AF37]" />
-              </motion.div>
-            </motion.div>
-
-            {/* Symmetrical Handloom Zari Thread Progress Line */}
+            {/* Symmetrical Handloom Zari Thread Progress Line Underneath Logo */}
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.42, duration: 0.7 }}
-              className="mt-8 sm:mt-9 flex flex-col items-center w-full"
+              transition={{ delay: 0.35, duration: 0.7 }}
+              className="mt-8 sm:mt-10 flex flex-col items-center w-full"
             >
               <div
                 data-testid="vastraa-intro-progress"

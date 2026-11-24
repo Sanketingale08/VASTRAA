@@ -69,3 +69,10 @@ scripts/test-dist/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# SSH Keys and secrets
+*.pem
+vastraa.pem
+*.key
+*.id_rsa
+*.id_ed25519

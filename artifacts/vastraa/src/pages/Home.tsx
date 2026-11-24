@@ -23,6 +23,7 @@ const QuickViewModal = lazy(() => import("@/components/QuickViewModal").then(m =
 import { useListProducts, getListProductsQueryKey } from "@workspace/api-client-react";
 import { PriceRangeCards } from "@/components/PriceRangeCards";
 import { BUDGET_RANGES, getBudgetById, getBudgetByPrice } from "@/constants/budget";
+import { DualProductShowcase } from "@/components/DualProductShowcase";
 import { AdvertisementCarousel } from "@/components/AdvertisementCarousel";
 import type { ProductSummary } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
@@ -502,6 +503,9 @@ export default function Home() {
           onSelect={handleBudgetSelect}
         />
       </section>
+
+      {/* ── 3. NEW ARRIVALS & BESTSELLING PRODUCTS ── */}
+      <DualProductShowcase onQuickView={setQuickViewProduct} />
 
       {/* ── ADVERTISEMENT SCROLLING WINDOW ── */}
       <AdvertisementCarousel autoPlayIntervalMs={6000} />

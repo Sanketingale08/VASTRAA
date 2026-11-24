@@ -3984,3 +3984,11 @@ export async function sendAdmin2faOtpEmail(opts: {
   };
 }
 
+export async function sendAdminProfileOtpEmail(opts: {
+  toEmail: string;
+  otp: string;
+  name?: string;
+}): Promise<{ delivered: boolean; error?: string }> {
+  return sendAdmin2faOtpEmail(opts);
+}
+

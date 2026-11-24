@@ -2,7 +2,7 @@ import { Router } from "express";
 import crypto from "crypto";
 import { getAuth } from "@clerk/express";
 import { requireAuth } from "../middlewares/isAuthenticated";
-import { db, mongoProducts, mongoGeneric, mongoWishlists, mongoNotifications, mongoNotificationPreferences, mongoSellers, mongoVendors, mongoUsers, mongoProductCategories, getNextSequenceValue, validateCategoryAndSubcategory, resolveCategoryData, findCategoryDefinition, registerDynamicSubcategory, normalizeCategoryString } from "@workspace/db";
+import { db, mongoProducts, mongoGeneric, mongoWishlists, mongoNotifications, mongoNotificationPreferences, mongoSellers, mongoVendors, mongoUsers, mongoProductCategories, mongoOrders, getNextSequenceValue, validateCategoryAndSubcategory, resolveCategoryData, findCategoryDefinition, registerDynamicSubcategory, normalizeCategoryString } from "@workspace/db";
 import { productsTable, vendorsTable, wishlistsTable, notificationsTable, notificationPreferencesTable, searchQueriesTable, CATEGORY_PREFIX } from "@workspace/db";
 import type { Request, Response, NextFunction } from "express";
 import { eq, ilike, and, gte, lte, desc, asc, sql, or, isNotNull, isNull, inArray, lt } from "@workspace/db";
@@ -14,6 +14,7 @@ import { emitProductEvent } from "../lib/socket";
 import { globalCache, safeClearCache, safeInvalidatePattern } from "../lib/cacheEngine";
 import { calculateVastraaFinancials, toPaise, toRupees } from "../lib/pricingEngine";
 import { getApprovedVendorData, isProductVendorValid } from "../lib/vendorValidation";
+import { isDemoOrder } from "../lib/orderFilter";
 import { verifyAccessToken } from "../lib/jwt";
 import { verifyAdminAccessKey } from "../middlewares/isAdmin";
 
@@ -137,6 +138,78 @@ router.get("/products", async (req, res) => {
   } catch (err) {
     req.log?.error({ err }, "Products search query failed");
     res.status(500).json({ error: "Failed to fetch products" });
+  }
+});
+
+router.get("/products/bestsellers", async (req, res) => {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  try {
+    const limit = Math.min(24, Math.max(1, parseInt(req.query.limit as string) || 4));
+    const approvedVendors = await getApprovedVendorData();
+
+    // 1. Fetch genuine completed or active orders to aggregate sales volume
+    const orders = await mongoOrders.findMany({}).catch(() => []);
+    const salesCountMap: Record<string, number> = {};
+
+    for (const order of orders) {
+      if (isDemoOrder(order)) continue;
+      const status = String(order.status || "").toLowerCase().trim();
+      // Exclude explicitly cancelled or failed transactions
+      if (status === "cancelled" || status === "failed" || status === "rejected") continue;
+
+      if (Array.isArray(order.items)) {
+        for (const item of order.items) {
+          const pid = String(item.productId || item.id || "").trim();
+          if (pid) {
+            const qty = Math.max(1, parseInt(item.quantity) || 1);
+            salesCountMap[pid] = (salesCountMap[pid] || 0) + qty;
+          }
+        }
+      }
+    }
+
+    // 2. Fetch all active, approved products
+    const allProducts = await mongoProducts.findMany({ active: { $ne: false } }).catch(() => []);
+    const validProducts = allProducts.filter((p: any) => isProductVendorValid(p, approvedVendors));
+
+    // 3. Sort by aggregated sales volume descending, then by rating, then by review count, then newest
+    validProducts.sort((a: any, b: any) => {
+      const aId = String(a.id || a._id || "").trim();
+      const bId = String(b.id || b._id || "").trim();
+      const aSales = salesCountMap[aId] || 0;
+      const bSales = salesCountMap[bId] || 0;
+      if (bSales !== aSales) return bSales - aSales;
+
+      const aBest = a.isBestSeller ? 1 : 0;
+      const bBest = b.isBestSeller ? 1 : 0;
+      if (bBest !== aBest) return bBest - aBest;
+
+      const aRating = Number(a.rating) || 0;
+      const bRating = Number(b.rating) || 0;
+      if (bRating !== aRating) return bRating - aRating;
+
+      const aReviews = Number(a.reviewCount) || 0;
+      const bReviews = Number(b.reviewCount) || 0;
+      if (bReviews !== aReviews) return bReviews - aReviews;
+
+      const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return bTime - aTime;
+    });
+
+    const sliced = validProducts.slice(0, limit);
+    const normalized = sliced.map(normalizeProduct).filter(Boolean);
+
+    res.json({
+      products: normalized,
+      total: validProducts.length,
+      limit,
+    });
+  } catch (err) {
+    req.log?.error({ err }, "Failed to fetch bestselling products");
+    res.status(500).json({ error: "Failed to fetch bestselling products" });
   }
 });
 

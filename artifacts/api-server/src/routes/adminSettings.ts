@@ -914,6 +914,32 @@ router.get("/admin/audit-logs", requireAdminKey, async (req: any, res: any) => {
 
 // ── Public: maintenance status probe (no auth — used by the storefront SPA) ──
 
+router.get("/settings/announcements", async (_req: any, res: any) => {
+  try {
+    const a1 = (await getSetting("announcement_1")) || "Free Shipping on Orders Above ₹999";
+    const a2 = (await getSetting("announcement_2")) || "Authentic Indian Weaves";
+    const cta = (await getSetting("announcement_cta")) || "Shop Now";
+    const link = (await getSetting("announcement_link")) || "/sarees";
+    res.json({
+      settings: {
+        announcement_1: a1,
+        announcement_2: a2,
+        announcement_cta: cta,
+        announcement_link: link,
+      },
+    });
+  } catch {
+    res.json({
+      settings: {
+        announcement_1: "Free Shipping on Orders Above ₹999",
+        announcement_2: "Authentic Indian Weaves",
+        announcement_cta: "Shop Now",
+        announcement_link: "/sarees",
+      },
+    });
+  }
+});
+
 router.get("/settings/maintenance-status", async (_req: any, res: any) => {
   try {
     const val = await getSetting("maintenance_mode");

@@ -103,14 +103,17 @@ jobs:
           DEPLOY_SHA: ${{ github.sha }}
         run: |
           echo "[+] Connecting to ${USER}@${HOST}..."
-          ssh "${USER}@${HOST}" "bash -s" << 'EOF'
+          ssh "${USER}@${HOST}" "bash -s -- '${TARGET_DIR:-/var/www/vastraa}' '${TARGET_BRANCH:-main}' '${DEPLOY_SHA}'" << 'EOF'
             set -euo pipefail
-            DEPLOY_PATH="${TARGET_DIR:-/var/www/vastraa}"
-            APP_NAME="vastraa-api"
+            DEPLOY_PATH="${1:-/var/www/vastraa}"
+            TARGET_BRANCH="${2:-main}"
+            DEPLOY_SHA="${3:-HEAD}"
             
             echo "========================================================="
             echo "  VASTRAA SERVER-SIDE DEPLOYMENT TASK STARTED"
             echo "  Working Directory: ${DEPLOY_PATH}"
+            echo "  Target Branch    : ${TARGET_BRANCH}"
+            echo "  Deploy Commit    : ${DEPLOY_SHA}"
             echo "========================================================="
 
             cd "${DEPLOY_PATH}"
@@ -149,17 +152,22 @@ jobs:
             pnpm install --frozen-lockfile --prefer-offline || pnpm install
 
             # 5. Build packages
+            pnpm run typecheck:libs
             pnpm --filter @workspace/api-server run build
             pnpm --filter @workspace/twirldrape run build
 
             # 6. PM2 Graceful Reload
-            if pm2 describe "${APP_NAME}" > /dev/null 2>&1; then
-              echo "[+] Reloading existing PM2 cluster gracefully..."
-              pm2 reload "${APP_NAME}" --update-env
+            # Detect whether PM2 process is named api-server or vastraa-api
+            if pm2 describe "api-server" > /dev/null 2>&1; then
+              echo "[+] Reloading existing PM2 process (api-server)..."
+              pm2 reload "api-server" --update-env
+            elif pm2 describe "vastraa-api" > /dev/null 2>&1; then
+              echo "[+] Reloading existing PM2 process (vastraa-api)..."
+              pm2 reload "vastraa-api" --update-env
             else
               echo "[+] Starting new PM2 cluster process..."
               cd "${DEPLOY_PATH}/artifacts/api-server"
-              pm2 start dist/index.mjs --name "${APP_NAME}" -i max --node-args="--enable-source-maps"
+              pm2 start dist/index.mjs --name "api-server" -i max --node-args="--enable-source-maps"
               cd "${DEPLOY_PATH}"
             fi
             pm2 save || true
@@ -187,7 +195,7 @@ jobs:
               if [ -d "${ROLLBACK_DIR}/vastraa-dist" ]; then
                 cp -r "${ROLLBACK_DIR}/vastraa-dist/"* "${DEPLOY_PATH}/artifacts/vastraa/dist/"
               fi
-              pm2 reload "${APP_NAME}" || true
+              pm2 reload "api-server" 2>/dev/null || pm2 reload "vastraa-api" || true
               exit 1
             fi
 

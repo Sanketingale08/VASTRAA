@@ -151,7 +151,8 @@ jobs:
             fi
             pnpm install --frozen-lockfile --prefer-offline || pnpm install
 
-            # 5. Build packages
+            # 5. Build packages with NODE_OPTIONS memory allocation
+            export NODE_OPTIONS="--max-old-space-size=2560"
             pnpm run typecheck:libs
             pnpm --filter @workspace/api-server run build
             pnpm --filter @workspace/twirldrape run build

@@ -428,14 +428,21 @@ export class R2StorageService {
       bufferBase64: data.toString("base64"),
     }).catch(() => {});
 
-    // Save to local public/uploads directory as well
+    // Save to local public/uploads directory only when R2 is not configured
     try {
-      const fs = require("fs");
-      const path = require("path");
-      const uploadsDir = path.resolve(process.cwd(), "public/uploads");
-      const targetPath = path.join(uploadsDir, objectKey);
-      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-      fs.writeFileSync(targetPath, data);
+      const hasR2 = Boolean(
+        (process.env.R2_ACCOUNT_ID || process.env.CLOUDFLARE_ACCOUNT_ID) &&
+        (process.env.R2_ACCESS_KEY_ID || process.env.CLOUDFLARE_GLOBAL_API_KEY) &&
+        process.env.R2_SECRET_ACCESS_KEY
+      );
+      if (!hasR2) {
+        const fs = require("fs");
+        const path = require("path");
+        const uploadsDir = path.resolve(process.cwd(), "public/uploads");
+        const targetPath = path.join(uploadsDir, objectKey);
+        fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+        fs.writeFileSync(targetPath, data);
+      }
     } catch {}
 
     return { objectKey, publicUrl };

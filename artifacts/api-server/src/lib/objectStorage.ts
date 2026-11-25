@@ -261,6 +261,16 @@ export class ObjectStorageService {
   }
 
   private saveFileToLocalUploads(relativeImagePath: string, data: Buffer): void {
+    // When Cloudflare R2 credentials are configured, do not save files to the local uploads directory
+    const hasR2 = Boolean(
+      (process.env.R2_ACCOUNT_ID || process.env.CLOUDFLARE_ACCOUNT_ID) &&
+      (process.env.R2_ACCESS_KEY_ID || process.env.CLOUDFLARE_GLOBAL_API_KEY) &&
+      process.env.R2_SECRET_ACCESS_KEY
+    );
+    if (hasR2) {
+      return;
+    }
+
     const candidateDirs = [
       path.resolve(process.cwd(), "public/uploads"),
       path.resolve(process.cwd(), "artifacts/api-server/public/uploads"),
